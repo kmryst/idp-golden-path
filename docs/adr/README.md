@@ -41,3 +41,4 @@
 | --- | --- | --- |
 | [0001](./0001-adopt-backstage-for-idp-portfolio.md) | Accepted | IDP ポートフォリオの基盤に Backstage を採用する |
 | [0002](./0002-adopt-lightweight-and-strict-github-flow.md) | Accepted | 既存 2 リポジトリの軽運用 / 厳密運用 GitHub Flow モデルを踏襲する |
+| [0003](./0003-backstage-app-layout-and-local-dev-baseline.md) | Accepted | Backstage アプリを `backstage/` に配置し、ローカル開発は guest 認証 + インメモリ SQLite を基準とする |

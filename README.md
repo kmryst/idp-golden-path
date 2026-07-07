@@ -6,7 +6,17 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 
 ## Status
 
-構想・基盤整備段階。運用基盤（GitHub Flow・CI ガードレール・branch protection・ADR 運用）の整備が完了し、Backstage 実装はこれから。
+運用基盤（GitHub Flow・CI ガードレール・branch protection・ADR 運用）の整備が完了し、Backstage アプリの実装を開始した。現段階はローカル開発のみ（デプロイ先は未確定、[ADR 0003](./docs/adr/0003-backstage-app-layout-and-local-dev-baseline.md) 参照）。
+
+## ローカル起動
+
+Backstage アプリ本体は [backstage/](./backstage/) にある。Node.js 22 または 24 が必要。
+
+```bash
+cd backstage
+yarn install
+yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
+```
 
 ## 設計判断（ADR）
 
@@ -14,6 +24,7 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 
 - [ADR 0001](./docs/adr/0001-adopt-backstage-for-idp-portfolio.md) — IDP ポートフォリオの基盤に Backstage を採用する
 - [ADR 0002](./docs/adr/0002-adopt-lightweight-and-strict-github-flow.md) — 既存2リポジトリの軽運用 / 厳密運用 GitHub Flow モデルを踏襲する
+- [ADR 0003](./docs/adr/0003-backstage-app-layout-and-local-dev-baseline.md) — Backstage アプリを `backstage/` に配置し、ローカル開発は guest 認証 + インメモリ SQLite を基準とする
 
 ## 開発への参加
 

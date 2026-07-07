@@ -12,5 +12,6 @@
     "MD024": { "siblings_only": true }
   },
   "globs": ["**/*.md"],
-  "ignores": ["node_modules/**"]
+  // backstage/ は @backstage/create-app の生成コード。ドキュメント正本ではないため lint 対象外
+  "ignores": ["node_modules/**", "backstage/**"]
 }
