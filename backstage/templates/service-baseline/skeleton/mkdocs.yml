@@ -1,0 +1,13 @@
+site_name: ${{ values.name }}
+site_description: ${{ values.description }}
+repo_url: https://github.com/${{ values.destination.owner }}/${{ values.destination.repo }}
+edit_uri: edit/main/docs/
+nav:
+  - はじめに: index.md
+  - ADR:
+      - 一覧: adr/README.md
+      - 0001 service-baseline から生成: adr/0001-bootstrap-from-service-baseline-template.md
+  - 運用:
+      - branch protection: operations/branch-protection.md
+plugins:
+  - techdocs-core
