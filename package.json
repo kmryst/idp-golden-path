@@ -1,0 +1,15 @@
+{
+  "name": "idp-golden-path",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal Developer Platform (IDP) portfolio built on Backstage - repo governance and CI tooling",
+  "scripts": {
+    "commitlint": "commitlint",
+    "lint:md": "markdownlint-cli2"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "markdownlint-cli2": "^0.18.1"
+  }
+}
