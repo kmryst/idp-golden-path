@@ -10,7 +10,7 @@ Usage:
     --body-file path/to/body.md \
     --issue 123 \
     --type type:feature \
-    --area area:poc \
+    --area area:backstage \
     --risk risk:low \
     --cost cost:none \
     [--area area:docs] \
@@ -34,22 +34,13 @@ Notes:
   - Repeat --area for multiple area labels.
   - The script appends Closes #<issue> to the PR body automatically.
   - The script creates the PR first, then applies labels with gh issue edit.
+  - The PR is created as a draft. Review it and run `gh pr ready <number>`.
+  - Pass a *filled copy* of the PR template as --body-file, not the template itself.
 EOF
 }
 
-die() {
-	printf 'Error: %s\n' "$1" >&2
-	exit 1
-}
-
-require_prefix() {
-	local value="$1"
-	local prefix="$2"
-
-	if [[ $value != "$prefix"* ]]; then
-		die "Expected label '$value' to start with '$prefix'"
-	fi
-}
+# shellcheck source=scripts/github/lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 title=""
 body_file=""
@@ -122,18 +113,8 @@ done
 [[ -n $body_file ]] || die "--body-file is required"
 [[ -f $body_file ]] || die "Body file not found: $body_file"
 [[ -n $linked_issue ]] || die "--issue is required"
-[[ -n $type_label ]] || die "--type is required"
-[[ ${#area_labels[@]} -ge 1 ]] || die "At least one --area is required"
-[[ -n $risk_label ]] || die "--risk is required"
-[[ -n $cost_label ]] || die "--cost is required"
-
 [[ $linked_issue =~ ^[0-9]+$ ]] || die "--issue must be a numeric issue number"
-require_prefix "$type_label" "type:"
-require_prefix "$risk_label" "risk:"
-require_prefix "$cost_label" "cost:"
-for area_label in "${area_labels[@]}"; do
-	require_prefix "$area_label" "area:"
-done
+validate_required_labels "$type_label" "$risk_label" "$cost_label" "${area_labels[@]}"
 
 tmp_body="$(mktemp)"
 trap 'rm -f "$tmp_body"' EXIT
