@@ -74,7 +74,8 @@ spec:
 
   steps:
     # skeleton を nunjucks で展開する。
-    # GitHub Actions 式（${{ github.* }} / ${{ secrets.* }}）を含むファイルは
+    # GitHub Actions 式（${{ github.* }} / ${{ secrets.* }}）を含むファイルと、
+    # bash の ${#array[@]} が nunjucks のコメント開始 `{#` と衝突する shell scripts は
     # copyWithoutTemplating で無変換コピーする（ADR-0006）
     - id: fetch-skeleton
       name: Fetch skeleton
@@ -84,6 +85,7 @@ spec:
         copyWithoutTemplating:
           - .github/workflows/**
           - .github/actions/**
+          - scripts/github/**
         values:
           name: ${{ parameters.name }}
           description: ${{ parameters.description }}

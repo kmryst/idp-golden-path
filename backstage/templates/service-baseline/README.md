@@ -36,8 +36,9 @@ service-baseline/
 
 ## skeleton 編集時の注意
 
-- `${{ values.* }}` は nunjucks で展開される。GitHub Actions 式（`${{ github.* }}` など）を含むファイルは
-  `template.yaml` の `copyWithoutTemplating`（`.github/workflows/**` / `.github/actions/**`）に含めて無変換コピーすること
+- `${{ values.* }}` は nunjucks で展開される。GitHub Actions 式（`${{ github.* }}` など）や
+  bash の `${#array[@]}`（nunjucks のコメント開始 `{#` と衝突する）を含むファイルは、
+  `template.yaml` の `copyWithoutTemplating`（`.github/workflows/**` / `.github/actions/**` / `scripts/github/**`）に含めて無変換コピーすること
 - skeleton は本リポジトリの `CLAUDE.md` / `CONTRIBUTING.md` / `.github/**` / `scripts/github/**` のコピーを含む。
   本体側を変更する PR では skeleton への追随要否を確認すること（ADR-0006「影響」）
 - skeleton 配下の Markdown は本体の markdownlint 対象外（`backstage/**` は ignore）

@@ -124,6 +124,12 @@ catalog:
     - type: file
       target: ../../../catalog-info.yaml
 
+    # ゴールデンパステンプレート（ADR-0006 参照）
+    - type: file
+      target: ../../templates/service-baseline/template.yaml
+      rules:
+        - allow: [Template]
+
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml

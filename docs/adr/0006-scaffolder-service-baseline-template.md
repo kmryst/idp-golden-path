@@ -23,7 +23,7 @@ Accepted
   - ADR 運用（`docs/adr/README.md` + 生成経緯を記録する初期 ADR 0001）
   - TechDocs 対応（`mkdocs.yml` + `docs/`）と `catalog-info.yaml`（生成直後に Software Catalog へ登録可能）
 - branch protection: テンプレートでは**自動適用しない**。生成物の `docs/operations/branch-protection.md` に適用コマンド（`gh api`）を記載し、初回 CI 実行後の手動適用とする
-- テンプレート展開: `fetch:template` を使い、GitHub Actions 式（`${{ github.* }}` / `${{ secrets.* }}`）を含む `.github/workflows/**` と `.github/actions/**` は `copyWithoutTemplating` で無変換コピーする
+- テンプレート展開: `fetch:template` を使い、GitHub Actions 式（`${{ github.* }}` / `${{ secrets.* }}`）を含む `.github/workflows/**` / `.github/actions/**` と、bash の `${#array[@]}` が nunjucks のコメント開始 `{#` と衝突する `scripts/github/**` は `copyWithoutTemplating` で無変換コピーする
 
 ## 背景
 

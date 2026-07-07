@@ -14,5 +14,6 @@ nav:
       - 0006 Scaffolder ガバナンスベースライン: adr/0006-scaffolder-service-baseline-template.md
   - 運用:
       - branch protection: operations/branch-protection.md
+      - Scaffolder GitHub 連携: operations/scaffolder-github-integration.md
 plugins:
   - techdocs-core
