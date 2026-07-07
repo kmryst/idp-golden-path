@@ -105,6 +105,21 @@ catalog:
   rules:
     - allow: [Component, System, API, Resource, Location]
   locations:
+    # ポートフォリオのカタログ実データ（file locations は packages/backend からの相対パス）
+    # 組織エンティティ（User / Group）
+    - type: file
+      target: ../../../catalog/org.yaml
+      rules:
+        - allow: [User, Group]
+
+    # 既存リポジトリの Component / System 登録スタブ（ADR-0004 参照）
+    - type: file
+      target: ../../../catalog/portfolio.yaml
+
+    # この Backstage アプリ自身
+    - type: file
+      target: ../../catalog-info.yaml
+
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
       target: ../../examples/entities.yaml

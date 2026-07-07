@@ -1,0 +1,21 @@
+# 組織エンティティ（User / Group）の定義
+# Component の owner 解決に使う。個人ポートフォリオのため単一 User + 単一 Group の最小構成
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: kmryst
+  description: Platform Engineer (portfolio owner)
+  links:
+    - url: https://github.com/kmryst
+      title: GitHub
+spec:
+  memberOf: [platform]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform
+  description: Platform Engineering (portfolio)
+spec:
+  type: team
+  children: []
