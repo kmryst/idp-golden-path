@@ -71,4 +71,4 @@ SaaS 型は実装を示せず、自作は周辺実装に工数が偏るため、
 
 - [Issue #10](https://github.com/kmryst/idp-golden-path/issues/10)
 - [ADR 0002](./0002-adopt-lightweight-and-strict-github-flow.md) - 運用基盤の踏襲
-- [README.md](../../README.md)
+- [README.md](https://github.com/kmryst/idp-golden-path/blob/main/README.md)
