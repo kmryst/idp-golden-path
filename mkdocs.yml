@@ -15,6 +15,7 @@ nav:
       - 0007 Scaffolder の GitHub 連携は PAT を継続: adr/0007-scaffolder-github-app-authentication.md
   - 運用:
       - branch protection: operations/branch-protection.md
+      - セキュリティスキャン: operations/security-scanning.md
       - Scaffolder GitHub 連携: operations/scaffolder-github-integration.md
 plugins:
   - techdocs-core

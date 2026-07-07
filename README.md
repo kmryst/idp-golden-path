@@ -51,3 +51,4 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 
 Issue / Branch / Commit / PR / Label の運用ルールは [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
 main ブランチ保護設定は [docs/operations/branch-protection.md](./docs/operations/branch-protection.md) に記録している。
+CI セキュリティスキャン（Gitleaks / Dependency Audit / CodeQL）の運用は [docs/operations/security-scanning.md](./docs/operations/security-scanning.md) に記録している。
