@@ -1,12 +1,22 @@
 # Markdown Lint
 # 目的: ドキュメント中心の現段階で、Markdown の品質を required status check として担保する
 # 設定の正本: .markdownlint-cli2.jsonc
+# このファイルは本リポジトリの PR チェックであると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/markdown-lint.yml@v1` で呼び出す
+# reusable workflow でもある（バージョニング方針は ADR-0008）
+# 呼び出し側リポジトリの前提: package.json に `lint:md` script と markdownlint 設定があること
 
 name: Markdown Lint
 
 on:
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      node-version:
+        description: セットアップする Node.js のバージョン（未指定時は 24）
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,8 +33,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Node.js and install dependencies
-        uses: ./.github/actions/setup-node-npm
+      # reusable workflow として呼び出し側リポジトリを checkout して動くため、
+      # 本リポジトリのローカル composite action には依存せずインライン化している
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version || '24' }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run markdownlint
         run: npm run lint:md

@@ -1,6 +1,10 @@
 # Sync Labels
 # 目的: ラベル定義の正本 .github/labels.yml を GitHub に自動同期する
 # 実体は helper scripts/github/sync-labels.sh を呼ぶ（二重実装を避ける）
+# このファイルは本リポジトリの自動同期であると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/sync-labels.yml@v1` で呼び出す
+# reusable workflow でもある（バージョニング方針は ADR-0008）
+# 呼び出し側リポジトリの前提: .github/labels.yml と scripts/github/sync-labels.sh があること
 
 name: Sync Labels
 
@@ -11,6 +15,7 @@ on:
     paths:
       - '.github/labels.yml'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
