@@ -11,6 +11,7 @@ nav:
       - 0003 Backstage 配置とローカル開発基準: adr/0003-backstage-app-layout-and-local-dev-baseline.md
       - 0004 カタログ登録スタブ: adr/0004-catalog-registration-via-local-stub-locations.md
       - 0005 TechDocs ローカル構成: adr/0005-techdocs-local-generator.md
+      - 0006 Scaffolder ガバナンスベースライン: adr/0006-scaffolder-service-baseline-template.md
   - 運用:
       - branch protection: operations/branch-protection.md
 plugins:
