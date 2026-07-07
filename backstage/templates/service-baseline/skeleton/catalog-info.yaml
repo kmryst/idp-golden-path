@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description }}
+  annotations:
+    github.com/project-slug: ${{ values.destination.owner }}/${{ values.destination.repo }}
+    # mkdocs.yml はこのファイルと同じディレクトリ（リポジトリルート）にある
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: service
+  owner: ${{ values.owner }}
+  lifecycle: ${{ values.lifecycle }}

@@ -1,0 +1,129 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+# ゴールデンパステンプレート: リポジトリ・ガバナンスベースライン（設計判断は ADR-0006 を参照）
+# https://github.com/kmryst/idp-golden-path/blob/main/docs/adr/0006-scaffolder-service-baseline-template.md
+kind: Template
+metadata:
+  name: service-baseline
+  title: Service Baseline (Golden Path)
+  description: |
+    新規サービスリポジトリを、確立済みの運用基盤つきで作成します。
+    CLAUDE.md / CONTRIBUTING.md（軽運用・厳密運用 GitHub Flow）、ラベル定義、
+    CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels）、
+    Issue / PR テンプレート、helper scripts、ADR 運用、TechDocs / Catalog 対応が最初から有効です。
+  tags:
+    - golden-path
+    - governance
+    - recommended
+spec:
+  owner: group:default/platform
+  type: service
+
+  parameters:
+    - title: サービス情報
+      required:
+        - name
+        - description
+        - owner
+      properties:
+        name:
+          title: サービス名
+          type: string
+          description: リポジトリ名・カタログ登録名になります（小文字英数字とハイフン）
+          maxLength: 63
+          pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          ui:autofocus: true
+        description:
+          title: 説明
+          type: string
+          description: このサービスが何をするかの 1〜2 行の説明
+        owner:
+          title: オーナー
+          type: string
+          description: このサービスを所有する Group
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: [Group]
+        lifecycle:
+          title: ライフサイクル
+          type: string
+          description: カタログに登録する lifecycle
+          default: experimental
+          enum:
+            - experimental
+            - production
+
+    - title: 公開先リポジトリ
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: リポジトリの場所
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+        repoVisibility:
+          title: リポジトリの可視性
+          type: string
+          default: private
+          enum:
+            - private
+            - public
+
+  steps:
+    # skeleton を nunjucks で展開する。
+    # GitHub Actions 式（${{ github.* }} / ${{ secrets.* }}）を含むファイルは
+    # copyWithoutTemplating で無変換コピーする（ADR-0006）
+    - id: fetch-skeleton
+      name: Fetch skeleton
+      action: fetch:template
+      input:
+        url: ./skeleton
+        copyWithoutTemplating:
+          - .github/workflows/**
+          - .github/actions/**
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          lifecycle: ${{ parameters.lifecycle }}
+          destination: ${{ parameters.repoUrl | parseRepoUrl }}
+
+    # GitHub にリポジトリを作成して push する。
+    # branch protection は初回 CI 実行前に required checks を設定すると PR を恒久ブロックし得るため
+    # ここでは適用せず、生成物の docs/operations/branch-protection.md の手順で適用する（ADR-0006）
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        repoUrl: ${{ parameters.repoUrl }}
+        description: ${{ parameters.description }}
+        repoVisibility: ${{ parameters.repoVisibility }}
+        defaultBranch: main
+        protectDefaultBranch: false
+        gitCommitMessage: 'feat: service-baselineテンプレートからリポジトリを初期化'
+
+    # 生成したリポジトリの catalog-info.yaml を Software Catalog に登録する
+    - id: register
+      name: Register in catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
+    text:
+      - title: 次にやること
+        content: |
+          1. `npm ci && npm run lint:md` でローカル検証環境を確認する
+          2. 最初の PR で CI の実行実績を作る
+          3. `docs/operations/branch-protection.md` の手順で main ブランチ保護を適用する
+          4. 技術選定は `docs/adr/` に ADR として記録してから実装を始める

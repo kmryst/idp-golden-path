@@ -1,0 +1,30 @@
+# Markdown Lint
+# 目的: ドキュメント中心の現段階で、Markdown の品質を required status check として担保する
+# 設定の正本: .markdownlint-cli2.jsonc
+
+name: Markdown Lint
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: markdown-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  markdown-lint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and install dependencies
+        uses: ./.github/actions/setup-node-npm
+
+      - name: Run markdownlint
+        run: npm run lint:md
