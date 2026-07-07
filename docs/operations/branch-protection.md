@@ -64,6 +64,22 @@ gh api repos/kmryst/idp-golden-path/branches/main/protection | jq '{
 }'
 ```
 
+## Backstage CI の required 昇格可否（2026-07-07 検討）
+
+ADR-0002 の「Backstage 実装開始時に、ビルド・テスト系 CI の追加と required checks の昇格を再検討する」のフォローアップとして、
+`Backstage CI`（`.github/workflows/backstage-ci.yml`）を追加した際に required status checks への昇格可否を検討した。
+
+**結論: 現時点では required に昇格しない。**
+
+- `Backstage CI` は `backstage/**` への paths filter 付きで実行される。paths filter 付き workflow を required にすると、
+  filter に一致しない PR（docs のみ等）では check run 自体が作成されず、required check が永久に pending となり PR がマージ不能になる
+- 回避策（paths filter を外して全 PR で実行 / `paths-ignore` + 同名 no-op workflow のペア運用）はいずれも、
+  docs 中心の PR が多い現段階ではコスト（全 PR で約数分の build/test）または運用複雑性に見合わない
+- `backstage/**` を触る PR では check が必ず実行・可視化されるため、少人数運用ではマージ前の目視確認で足りる
+
+**再検討の条件**: デプロイ導入（ADR-0003 の見直し）や複数人開発への移行で `backstage/**` の変更頻度・リスクが上がった場合、
+no-op ペア workflow 方式での required 昇格を再検討する。
+
 ## 変更時の注意
 
 - 存在しない check 名を required に指定すると、PR が永久にマージ不能になる。指定前に PR 上で実際の check run 名を確認する

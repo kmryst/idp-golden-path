@@ -1,0 +1,63 @@
+# Backstage CI
+# 目的: backstage/ 配下の Backstage アプリ本体を tsc / lint / test / build で検証する
+#       （ADR-0002「Backstage 実装が入った段階でビルド・テスト系チェックを追加する」の履行）
+# 実行内容はローカルの yarn コマンドと同一（backstage/README.md 参照）
+# 注意: paths filter があるため required status check には昇格しない
+#       （docs/operations/branch-protection.md 参照）
+
+name: Backstage CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backstage/**"
+      - ".github/workflows/backstage-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backstage-ci-${{ github.event.pull_request.number }}
+  # 実行中 run のキャンセルは CANCELLED check run を commit に残し、
+  # status checks の判定に混入し得るため cancel しない（他 workflow と同方針）。
+  cancel-in-progress: false
+
+jobs:
+  backstage-ci:
+    name: Backstage CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backstage
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # backstage/package.json の packageManager (yarn@4.x) を corepack で有効化する。
+      # setup-node の yarn キャッシュ解決より前に有効化が必要。
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          # backstage/package.json の engines (node 22 || 24) に合わせる
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: backstage/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Type check (yarn tsc)
+        run: yarn tsc
+
+      - name: Lint (yarn lint:all)
+        run: yarn lint:all
+
+      - name: Test (yarn test)
+        run: yarn test
+
+      - name: Build (yarn build:all)
+        run: yarn build:all
