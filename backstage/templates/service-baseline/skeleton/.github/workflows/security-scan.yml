@@ -1,7 +1,8 @@
 # Gitleaks Secret Scan
 # 目的: git 履歴への secret / credential 混入を required status check として検出する
-# 移植元: kmryst/terraform-hannibal の Gitleaks Secret Scan（設定は default config を使用）
-# workflow name は required status check（job name）と揃える
+# 実体は kmryst/idp-golden-path の reusable workflow（タグ固定参照、idp-golden-path ADR-0008）。
+# チェックロジックの正本は idp-golden-path 側にあり、更新は Dependabot のタグバージョンアップ PR で取り込む
+# required status check の名称は `Gitleaks Secret Scan / Gitleaks Secret Scan` になる点に注意する
 
 name: Gitleaks Secret Scan
 
@@ -19,31 +20,6 @@ concurrency:
 jobs:
   gitleaks:
     name: Gitleaks Secret Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Install Gitleaks
-        env:
-          GITLEAKS_VERSION: "8.30.1"
-        run: |
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
-          tar -xzf gitleaks.tar.gz gitleaks
-          sudo mv gitleaks /usr/local/bin/gitleaks
-          rm gitleaks.tar.gz
-          gitleaks version
-
-      - name: Run Gitleaks
-        run: gitleaks git --no-banner --redact
-
-      - name: Write Gitleaks summary
-        if: success()
-        run: |
-          {
-            echo "## Gitleaks Secret Scan"
-            echo ""
-            echo "No secrets were detected in the scanned git history."
-          } >> "$GITHUB_STEP_SUMMARY"
+    uses: kmryst/idp-golden-path/.github/workflows/security-scan.yml@v1
+    permissions:
+      contents: read

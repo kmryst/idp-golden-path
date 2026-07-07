@@ -1,7 +1,8 @@
 # Commitlint
 # 目的: CONTRIBUTING.md の Conventional Commits 規約をコミットメッセージと PR タイトルの両方で検証する
-# 移植元: kmryst/terraform-hannibal / kmryst/ticket-c2c-platform の pr-commitlint.yml
-# workflow name は required status check（job name）と揃える
+# 実体は kmryst/idp-golden-path の reusable workflow（タグ固定参照、idp-golden-path ADR-0008）。
+# チェックロジックの正本は idp-golden-path 側にあり、更新は Dependabot のタグバージョンアップ PR で取り込む
+# required status check の名称は `Commitlint / Commitlint` になる点に注意する
 
 name: Commitlint
 
@@ -25,23 +26,6 @@ jobs:
     # Dependabot の PR タイトルは可変長で header-max-length に抵触し得る。
     # フォーマットは Dependabot 側が決定的に生成するため規約強制の対象外とする。
     if: github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js and install dependencies
-        uses: ./.github/actions/setup-node-npm
-
-      - name: Lint PR commits
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: npm run commitlint -- --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
-
-      - name: Lint PR title
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$PR_TITLE" | npm run commitlint -- --verbose
+    uses: kmryst/idp-golden-path/.github/workflows/pr-commitlint.yml@v1
+    permissions:
+      contents: read

@@ -1,6 +1,9 @@
 # Markdown Lint
-# 目的: ドキュメント中心の現段階で、Markdown の品質を required status check として担保する
-# 設定の正本: .markdownlint-cli2.jsonc
+# 目的: ドキュメントの品質を required status check として担保する
+# 実体は kmryst/idp-golden-path の reusable workflow（タグ固定参照、idp-golden-path ADR-0008）。
+# チェックロジックの正本は idp-golden-path 側にあり、更新は Dependabot のタグバージョンアップ PR で取り込む
+# required status check の名称は `<caller job name> / <called job name>`
+# （例: `Markdown Lint / Markdown Lint`）になる点に注意する
 
 name: Markdown Lint
 
@@ -18,13 +21,6 @@ concurrency:
 jobs:
   markdown-lint:
     name: Markdown Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js and install dependencies
-        uses: ./.github/actions/setup-node-npm
-
-      - name: Run markdownlint
-        run: npm run lint:md
+    uses: kmryst/idp-golden-path/.github/workflows/markdown-lint.yml@v1
+    permissions:
+      contents: read
