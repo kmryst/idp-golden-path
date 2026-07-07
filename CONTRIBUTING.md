@@ -140,10 +140,13 @@ git push -u origin <branch>
 
 PR はテンプレートと helper を使って作成します。
 
+`--body-file` には `.github/pull_request_template.md` をそのまま渡さず、テンプレートを埋めたコピーを別ファイルとして作成して渡します。
+テンプレートをそのまま渡すと、未記入のプレースホルダ本文の末尾に helper が追記する `Closes #<issue番号>` が重複した、壊れた PR になります。
+
 ```bash
 ./scripts/github/create-pr-with-labels.sh \
   --title "feat: add scaffolder template for nodejs service" \
-  --body-file .github/pull_request_template.md \
+  --body-file /path/to/filled-pr-body.md \
   --issue <issue番号> \
   --type type:feature \
   --area area:golden-path \
@@ -152,7 +155,8 @@ PR はテンプレートと helper を使って作成します。
   --base main
 ```
 
-この helper は PR 本文へ `Closes #<issue番号>` を自動追記します。
+この helper は PR 本文へ `Closes #<issue番号>` を自動追記し、PR を **draft** で作成します。
+PR 内容を確認したら `gh pr ready <PR番号>` で ready にしてください。draft のままではレビュー・マージに進めません。
 
 PR タイトルも Conventional Commits 形式にします。
 

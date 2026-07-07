@@ -22,10 +22,8 @@ Examples:
 EOF
 }
 
-die() {
-	printf 'Error: %s\n' "$1" >&2
-	exit 1
-}
+# shellcheck source=scripts/github/lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 labels_file=".github/labels.yml"
 repo=""
