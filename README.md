@@ -29,7 +29,7 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 - Issue / PR テンプレートと helper scripts（`scripts/github/`）
 - ADR 運用（生成経緯を記録した ADR-0001 つき）と TechDocs / Catalog 対応（`mkdocs.yml` / `catalog-info.yaml`）
 
-入力するのはサービス名・説明・オーナー・公開先リポジトリ（GitHub の owner / repo と可視性）のみ。
+入力するのはサービス名・説明・オーナー・ライフサイクル（experimental / production）・公開先リポジトリ（GitHub の owner / repo と可視性）のみ。
 テンプレートの実体は [backstage/templates/service-baseline/](./backstage/templates/service-baseline/)、
 設計判断は [ADR 0006](./docs/adr/0006-scaffolder-service-baseline-template.md)、
 ローカルで実行するための前提条件（GitHub PAT のスコープ等）は
@@ -42,6 +42,10 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 - [ADR 0001](./docs/adr/0001-adopt-backstage-for-idp-portfolio.md) — IDP ポートフォリオの基盤に Backstage を採用する
 - [ADR 0002](./docs/adr/0002-adopt-lightweight-and-strict-github-flow.md) — 既存2リポジトリの軽運用 / 厳密運用 GitHub Flow モデルを踏襲する
 - [ADR 0003](./docs/adr/0003-backstage-app-layout-and-local-dev-baseline.md) — Backstage アプリを `backstage/` に配置し、ローカル開発は guest 認証 + インメモリ SQLite を基準とする
+- [ADR 0004](./docs/adr/0004-catalog-registration-via-local-stub-locations.md) — 既存リポジトリのカタログ登録は当面 `catalog/` 配下の file location スタブで行う
+- [ADR 0005](./docs/adr/0005-techdocs-local-generator.md) — TechDocs はローカル builder + ホスト mkdocs（runIn local）で運用する
+- [ADR 0006](./docs/adr/0006-scaffolder-service-baseline-template.md) — Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する
+- [ADR 0007](./docs/adr/0007-scaffolder-github-app-authentication.md) — Scaffolder の GitHub 連携は個人 PAT を継続し、GitHub App へは移行しない
 
 ## 開発への参加
 
