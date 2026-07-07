@@ -60,6 +60,65 @@ gh repo delete <owner>/<repo> --yes   # delete_repo スコープが必要
 Catalog に登録したエンティティは、Backstage UI のエンティティページ → Unregister entity で解除します
 （ローカルはインメモリ SQLite のため、backend 再起動でも消えます）。
 
+## PAT のローテーション / 失効（revoke）
+
+credential のライフサイクル（発行 → 利用 → ローテーション → 失効）の後半 2 つの手順です。
+手順内に secret 値そのものは書かず、必ずプレースホルダ（`<新しいPAT>` 等）で表記します。
+fine-grained PAT への移行など PAT 運用自体の変更は本節のスコープ外です（別途 ADR で判断する）。
+
+### 平時のローテーション方針
+
+- **有効期限**: 専用の classic PAT を発行する場合は無期限（No expiration）にせず、**90 日以内**の有効期限を設定する
+- **周期**: 有効期限にあわせて期限切れ前に再発行する。GitHub からの期限切れ予告メール（期限の約 1 週間前）をトリガーにしてよい
+- **`gh auth token` を転用している場合**: トークンは `gh` CLI のログインセッションに紐づく。`gh auth refresh` で再発行するか、後述の専用 PAT 方式に切り替える
+
+#### ローテーション時の差し替え手順
+
+1. GitHub Web UI で新しいトークンを発行する
+   （**Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token**）。
+   スコープは[前提条件](#github-personal-access-tokenpat)の表と同じ（`repo` / `workflow`、必要なら `delete_repo`）
+2. Backstage を起動しているシェルで環境変数を差し替え、backend を再起動する
+
+   ```bash
+   # Backstage を停止（Ctrl+C）してから
+   export GITHUB_TOKEN="<新しいPAT>"   # 値を履歴に残したくない場合は read -rs GITHUB_TOKEN && export GITHUB_TOKEN
+   yarn start
+   ```
+
+3. [動作確認](#ローテーション--失効後の動作確認)を行う
+4. 新トークンでの動作確認後、旧トークンを GitHub Web UI から **Delete** する（新旧併存期間を最短にする）
+
+### 漏洩時の失効手順（インシデント対応）
+
+漏洩（`.env` のコミット、ログ・画面共有への露出など）が疑われる場合は、**確認より失効を優先**して直ちに実施します。
+
+1. **GitHub 上で PAT を失効する**
+   - 専用 PAT の場合: **Settings → Developer settings → Personal access tokens → Tokens (classic)** で該当トークンを **Delete**
+   - `gh auth token` 転用の場合: `gh auth logout` でセッションを破棄するか、
+     **Settings → Applications → Authorized OAuth Apps → GitHub CLI** で認可を **Revoke** する
+2. **Backstage 側の環境変数を破棄する**
+   - Backstage backend を停止し、起動シェルで `unset GITHUB_TOKEN` する
+   - シェル履歴に `export GITHUB_TOKEN="..."` の形で値が残っていないか確認し、残っていれば履歴から削除する
+3. **影響を確認する**
+   - [Security log](https://github.com/settings/security-log) で漏洩疑い時刻以降の不審な操作（リポジトリ作成・削除、設定変更、SSH キー / PAT の追加）がないか確認する
+   - 身に覚えのないリポジトリ・コミット・workflow 実行がないか確認する（PAT は `repo` / `workflow` スコープを持つため）
+   - 不審な操作があった場合はパスワード変更と他の credential（SSH キー、その他 PAT）の棚卸しまで実施する
+4. 復旧する場合は、[ローテーション時の差し替え手順](#ローテーション時の差し替え手順)に従って新しいトークンを発行・注入する
+
+### ローテーション / 失効後の動作確認
+
+新しいトークンで Scaffolder が動作することを確認します。
+
+```bash
+# 新トークンのスコープ確認（repo / workflow があること）
+curl -sS -o /dev/null -D - -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user | grep -i x-oauth-scopes
+```
+
+1. `GITHUB_TOKEN` を差し替えたシェルで Backstage を再起動する（[実行手順](#実行手順)参照）
+2. **Service Baseline (Golden Path)** テンプレートを検証用リポジトリ名で実行し、`publish:github` ステップが成功することを確認する
+3. 検証で作成したリポジトリは[検証後の片付け（destroy）](#検証後の片付けdestroy)に従って削除する
+4. 失効対応の場合は、旧トークンが GitHub 上で失効済み（一覧に存在しない、または API が `401 Bad credentials` を返す）であることを確認する
+
 ## 制約・注意
 
 - `GITHUB_TOKEN` 未設定でも Backstage は起動するが、`publish:github` ステップが認証エラーで失敗する
