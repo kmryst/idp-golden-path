@@ -12,6 +12,7 @@ nav:
       - 0004 カタログ登録スタブ: adr/0004-catalog-registration-via-local-stub-locations.md
       - 0005 TechDocs ローカル構成: adr/0005-techdocs-local-generator.md
       - 0006 Scaffolder ガバナンスベースライン: adr/0006-scaffolder-service-baseline-template.md
+      - 0007 Scaffolder の GitHub 連携は PAT を継続: adr/0007-scaffolder-github-app-authentication.md
   - 運用:
       - branch protection: operations/branch-protection.md
       - Scaffolder GitHub 連携: operations/scaffolder-github-integration.md
