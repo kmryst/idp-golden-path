@@ -1,0 +1,57 @@
+# Dependency Audit
+# 目的: backstage/ (Yarn workspaces) の依存関係の既知脆弱性（CVE）を PR / スケジュールで継続的に検出する
+# ポリシー: high 以上で fail、moderate 以下は Step Summary での警告のみ（正本: docs/operations/security-scanning.md）
+# workflow name は status check（job name）と揃える
+
+name: Dependency Audit
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # 毎週月曜 09:00 JST (00:00 UTC)
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backstage
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack (Yarn 4)
+        run: |
+          corepack enable
+          yarn --version
+
+      # 全 severity のレポート（fail させない可視化用）
+      - name: Audit report (all severities, warn only)
+        run: |
+          {
+            echo "## Dependency Audit (all severities)"
+            echo ""
+            echo '```'
+            yarn npm audit --all --recursive || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # high / critical が存在する場合のみ fail させるゲート
+      - name: Audit gate (fail on high or critical)
+        run: yarn npm audit --all --recursive --severity high
