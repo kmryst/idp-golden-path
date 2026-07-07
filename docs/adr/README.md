@@ -44,3 +44,4 @@
 | [0003](./0003-backstage-app-layout-and-local-dev-baseline.md) | Accepted | Backstage アプリを `backstage/` に配置し、ローカル開発は guest 認証 + インメモリ SQLite を基準とする |
 | [0004](./0004-catalog-registration-via-local-stub-locations.md) | Accepted | 既存リポジトリのカタログ登録は当面 `catalog/` 配下の file location スタブで行う |
 | [0005](./0005-techdocs-local-generator.md) | Accepted | TechDocs はローカル builder + ホスト mkdocs（runIn local）で運用する |
+| [0006](./0006-scaffolder-service-baseline-template.md) | Accepted | Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する |
