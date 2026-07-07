@@ -73,7 +73,9 @@ proxy:
 techdocs:
   builder: 'local' # Alternatives - 'external'
   generator:
-    runIn: 'docker' # Alternatives - 'local'
+    # ローカル開発では docker image の pull を避け、ホストの mkdocs を使う（ADR-0005）
+    # 事前準備: uv tool install mkdocs --with mkdocs-techdocs-core
+    runIn: 'local' # Alternatives - 'docker'
   publisher:
     type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
 
@@ -116,9 +118,11 @@ catalog:
     - type: file
       target: ../../../catalog/portfolio.yaml
 
-    # この Backstage アプリ自身
+    # このリポジトリ自身（catalog-info.yaml はリポジトリルート。
+    # TechDocs の techdocs-ref: dir:. がリポジトリルートの mkdocs.yml を指すため、
+    # backstage/ 配下ではなくルートに置く）
     - type: file
-      target: ../../catalog-info.yaml
+      target: ../../../catalog-info.yaml
 
     # Local example data, file locations are relative to the backend process, typically `packages/backend`
     - type: file
