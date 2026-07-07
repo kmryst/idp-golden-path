@@ -1,8 +1,9 @@
-# PR Commitlint
+# Commitlint
 # 目的: CONTRIBUTING.md の Conventional Commits 規約をコミットメッセージと PR タイトルの両方で検証する
 # 移植元: kmryst/terraform-hannibal / kmryst/ticket-c2c-platform の pr-commitlint.yml
+# workflow name は required status check（job name）と揃える
 
-name: PR Commitlint
+name: Commitlint
 
 on:
   pull_request:
@@ -18,9 +19,6 @@ concurrency:
   # required status checks の判定に混入して PR を恒久的にブロックし得るため cancel しない。
   cancel-in-progress: false
 
-env:
-  NODE_VERSION: "24"
-
 jobs:
   commitlint:
     name: Commitlint
@@ -34,14 +32,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node.js and install dependencies
+        uses: ./.github/actions/setup-node-npm
 
       - name: Lint PR commits
         env:

@@ -2,8 +2,9 @@
 # 目的: CONTRIBUTING.md の PR 運用規約（必須ラベル・Issue リンク・厳密運用 PR のロールバック欄）を CI で検証する
 # 移植元: kmryst/terraform-hannibal / kmryst/ticket-c2c-platform の pr-policy-check.yml
 # 厳密運用 path 判定は本リポジトリの CONTRIBUTING.md「厳密運用」定義に合わせている
+# workflow name は required status check（job name）と揃える
 
-name: PR Policy
+name: PR Policy Check
 
 on:
   pull_request:
@@ -41,17 +42,18 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # labels_fetch_ok: いずれかの試行でラベル取得に成功したか（最終試行のみの結果ではない）。
+          # 途中の試行で取得済みなら、最終試行が API 障害でも直近の取得結果でラベル検証を行う。
           labels_fetch_ok=false
+          labels_json="[]"
 
           for attempt in 1 2 3 4 5; do
-            labels_fetch_ok=false
-
-            if labels_json=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]'); then
+            if labels_json_attempt=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]'); then
               labels_fetch_ok=true
+              labels_json="$labels_json_attempt"
               echo "Current PR labels: $labels_json"
             else
-              labels_json="[]"
-              echo "::warning::Failed to fetch current PR labels from GitHub API."
+              echo "::warning::Failed to fetch current PR labels from GitHub API (attempt ${attempt}/5)."
             fi
 
             counts=$(LABEL_NAMES_JSON="$labels_json" python3 - <<'PY'
@@ -89,8 +91,10 @@ jobs:
             fi
           done
 
+          # 全 5 試行が API 障害で失敗した場合のみ「取得失敗」として扱う。
+          # 一度でも取得できていればラベル検証へ進み、不足は「ラベル不足」として報告される。
           if [ "$labels_fetch_ok" != true ]; then
-            echo "::error::Failed to fetch current PR labels from GitHub API."
+            echo "::error::Failed to fetch current PR labels from GitHub API (all 5 attempts failed)."
             exit 1
           fi
 

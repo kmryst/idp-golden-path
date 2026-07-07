@@ -1,8 +1,9 @@
-# Security Scan
+# Gitleaks Secret Scan
 # 目的: git 履歴への secret / credential 混入を required status check として検出する
 # 移植元: kmryst/terraform-hannibal の Gitleaks Secret Scan（設定は default config を使用）
+# workflow name は required status check（job name）と揃える
 
-name: Security Scan
+name: Gitleaks Secret Scan
 
 on:
   pull_request:
