@@ -38,6 +38,6 @@
 ## 一覧
 
 | ADR | ステータス | 決定 |
-|---|---|---|
+| --- | --- | --- |
 | [0001](./0001-adopt-backstage-for-idp-portfolio.md) | Accepted | IDP ポートフォリオの基盤に Backstage を採用する |
 | [0002](./0002-adopt-lightweight-and-strict-github-flow.md) | Accepted | 既存 2 リポジトリの軽運用 / 厳密運用 GitHub Flow モデルを踏襲する |
