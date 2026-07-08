@@ -179,10 +179,17 @@ resource "aws_secretsmanager_secret_version" "backstage_backend" {
 }
 
 # --- GitHub OIDC ロール + permissions boundary ---------------------------------
-# 将来の CI（イメージ push / TechDocs publish）用。アカウント共通の OIDC provider を参照する。
+# CI 駆動 deploy / destroy 用（ADR 0010）。アカウント共通の OIDC provider を参照する。
+# イメージ push / TechDocs publish に加えて、ephemeral / shared 層の
+# terraform apply / destroy に必要な権限を持つ。persistent 層の tfstate には書き込めない。
 
 data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
+}
+
+locals {
+  # bootstrap 時に手動作成した state バケット（runbook 参照）
+  tfstate_bucket_arn = "arn:aws:s3:::idp-golden-path-tfstate-ba25cd9e"
 }
 
 data "aws_iam_policy_document" "github_actions_boundary" {
@@ -218,6 +225,137 @@ data "aws_iam_policy_document" "github_actions_boundary" {
       aws_s3_bucket.techdocs.arn,
       "${aws_s3_bucket.techdocs.arn}/*",
     ]
+  }
+
+  # ---- 以下、ephemeral / shared 層の terraform apply / destroy 用（ADR 0010） ----
+
+  # tfstate の読み取りは全層（ephemeral の remote_state が persistent を参照するため）。
+  # 書き込みは ephemeral / shared のみに限定し、CI から persistent 層の state を壊せないようにする。
+  statement {
+    sid = "TfstateRead"
+    actions = [
+      "s3:ListBucket",
+      "s3:GetObject",
+    ]
+    resources = [
+      local.tfstate_bucket_arn,
+      "${local.tfstate_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid = "TfstateWriteEphemeralShared"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+    ]
+    resources = [
+      "${local.tfstate_bucket_arn}/ephemeral/*",
+      "${local.tfstate_bucket_arn}/shared/*",
+    ]
+  }
+
+  # VPC / IPAM（ec2）、ECS、ALB、Aurora、CloudWatch Logs。
+  # これらはリソース単位の制限が実用的でないため、リージョン条件で境界を引く。
+  statement {
+    sid = "TerraformRegionalInfra"
+    actions = [
+      "ec2:*",
+      "ecs:*",
+      "elasticloadbalancing:*",
+      "rds:*",
+      "logs:*",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.region]
+    }
+  }
+
+  # ephemeral 層のタスクロール / タスク実行ロールの管理。
+  # 名前を idp-golden-path-* に限定する。managed policy の attach は
+  # ECS タスク実行用の AWS 管理ポリシーのみに絞り、権限昇格経路を塞ぐ。
+  statement {
+    sid = "TaskRoleManagement"
+    actions = [
+      "iam:CreateRole",
+      "iam:DeleteRole",
+      "iam:GetRole",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:PutRolePolicy",
+      "iam:DeleteRolePolicy",
+      "iam:GetRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListInstanceProfilesForRole",
+    ]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+  }
+
+  statement {
+    sid = "TaskRoleAttachEcsExecutionPolicyOnly"
+    actions = [
+      "iam:AttachRolePolicy",
+      "iam:DetachRolePolicy",
+    ]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "iam:PolicyARN"
+      values   = ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"]
+    }
+  }
+
+  statement {
+    sid       = "TaskRolePass"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # 初回 apply 時に必要になり得る service-linked role（既存なら no-op）
+  statement {
+    sid       = "ServiceLinkedRoles"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values = [
+        "ecs.amazonaws.com",
+        "elasticloadbalancing.amazonaws.com",
+        "rds.amazonaws.com",
+        "ipam.amazonaws.com",
+      ]
+    }
+  }
+
+  # ephemeral 層の ALB alias レコード操作（対象ゾーン限定）
+  statement {
+    sid = "Route53Records"
+    actions = [
+      "route53:ChangeResourceRecordSets",
+      "route53:ListResourceRecordSets",
+      "route53:GetHostedZone",
+    ]
+    resources = [aws_route53_zone.main.arn]
+  }
+
+  statement {
+    sid       = "Route53GetChange"
+    actions   = ["route53:GetChange"]
+    resources = ["arn:aws:route53:::change/*"]
   }
 }
 
