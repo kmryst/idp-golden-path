@@ -408,6 +408,31 @@ data "aws_iam_policy_document" "github_actions_boundary" {
       "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:rds!cluster-*",
     ]
   }
+
+  # ephemeral 層の aws_rds_cluster.main が storage_encrypted / manage_master_user_password
+  # で暗黙利用する AWS 管理キー（デフォルトエイリアス）向け。Issue #74 参照。
+  # 対象を2つの既定エイリアスに限定し、権限の過剰拡大を避ける。
+  statement {
+    sid = "DefaultKmsKeyForRdsAndSecretsManager"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey",
+      "kms:CreateGrant",
+      "kms:GenerateDataKey*",
+    ]
+    resources = [
+      "arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:key/*",
+    ]
+
+    condition {
+      test     = "ForAnyValue:StringEquals"
+      variable = "kms:ResourceAliases"
+      values = [
+        "alias/aws/rds",
+        "alias/aws/secretsmanager",
+      ]
+    }
+  }
 }
 
 resource "aws_iam_policy" "github_actions_boundary" {
