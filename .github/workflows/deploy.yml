@@ -74,8 +74,8 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: Apply shared layer (IPAM)
-        working-directory: terraform/shared
+      - name: Apply ipam layer
+        working-directory: terraform/ipam
         run: |
           set -euo pipefail
           terraform init -input=false

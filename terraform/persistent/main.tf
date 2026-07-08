@@ -180,7 +180,7 @@ resource "aws_secretsmanager_secret_version" "backstage_backend" {
 
 # --- GitHub OIDC ロール + permissions boundary ---------------------------------
 # CI 駆動 deploy / destroy 用（ADR 0010）。アカウント共通の OIDC provider を参照する。
-# イメージ push / TechDocs publish に加えて、ephemeral / shared 層の
+# イメージ push / TechDocs publish に加えて、ephemeral / ipam 層の
 # terraform apply / destroy に必要な権限を持つ。persistent 層の tfstate には書き込めない。
 
 data "aws_iam_openid_connect_provider" "github" {
@@ -233,10 +233,10 @@ data "aws_iam_policy_document" "github_actions_policy" {
     ]
   }
 
-  # ---- 以下、ephemeral / shared 層の terraform apply / destroy 用（ADR 0010） ----
+  # ---- 以下、ephemeral / ipam 層の terraform apply / destroy 用（ADR 0010） ----
 
   # tfstate の読み取りは全層（ephemeral の remote_state が persistent を参照するため）。
-  # 書き込みは ephemeral / shared のみに限定し、CI から persistent 層の state を壊せないようにする。
+  # 書き込みは ephemeral / ipam のみに限定し、CI から persistent 層の state を壊せないようにする。
   #
   # 既知の受容リスク: terraform_remote_state は outputs だけでなく state ファイル全体を
   # 取得するため、persistent state 内の random_password 生成値（backend secret / session 鍵）も
@@ -255,14 +255,14 @@ data "aws_iam_policy_document" "github_actions_policy" {
   }
 
   statement {
-    sid = "TfstateWriteEphemeralShared"
+    sid = "TfstateWriteEphemeralIpam"
     actions = [
       "s3:PutObject",
       "s3:DeleteObject",
     ]
     resources = [
       "${local.tfstate_bucket_arn}/ephemeral/*",
-      "${local.tfstate_bucket_arn}/shared/*",
+      "${local.tfstate_bucket_arn}/ipam/*",
     ]
   }
 

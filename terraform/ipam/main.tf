@@ -1,4 +1,4 @@
-# shared 層（アカウント共有基盤）: VPC IPAM 本体とプール
+# ipam 層（アカウント共有基盤）: VPC IPAM 本体とプール
 # 設計判断は ADR 0009 を参照。
 #
 # アカウント横断の共有基盤のため idp-golden-path 単体のライフサイクルに縛らない位置づけで
@@ -20,7 +20,7 @@ terraform {
 
   backend "s3" {
     bucket       = "idp-golden-path-tfstate-ba25cd9e"
-    key          = "shared/terraform.tfstate"
+    key          = "ipam/terraform.tfstate"
     region       = "ap-northeast-1"
     use_lockfile = true
   }
@@ -33,13 +33,13 @@ provider "aws" {
     tags = {
       Project   = "idp-golden-path"
       ManagedBy = "terraform"
-      Layer     = "shared"
+      Layer     = "ipam"
     }
   }
 }
 
 resource "aws_vpc_ipam" "main" {
-  description = "Account-level IPAM (managed in idp-golden-path/terraform/shared)"
+  description = "Account-level IPAM (managed in idp-golden-path/terraform/ipam)"
 
   operating_regions {
     region_name = var.region

@@ -9,7 +9,7 @@ idp-golden-path の CIDR 管理方針は [ADR 0009](../adr/0009-production-deplo
 | --- | --- | --- | --- |
 | `10.0.0.0/16` | ticket-c2c-platform (dev) | 各リポジトリの Terraform 直書き | terraform-hannibal と**重複**（既知） |
 | `10.0.0.0/16` | terraform-hannibal | 各リポジトリの Terraform 直書き | ticket-c2c-platform (dev) と**重複**（既知） |
-| `10.16.0.0/12` | idp-golden-path 用 IPAM プール | VPC IPAM（`terraform/shared/`） | この範囲から VPC CIDR を払い出す |
+| `10.16.0.0/12` | idp-golden-path 用 IPAM プール | VPC IPAM（`terraform/ipam/`） | この範囲から VPC CIDR を払い出す |
 | `10.16.0.0/16` | idp-golden-path ephemeral VPC | IPAM 払い出し（`terraform/ephemeral/`） | 検証時のみ存在 |
 
 ## 既知の重複について

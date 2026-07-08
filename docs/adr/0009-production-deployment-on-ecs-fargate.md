@@ -58,7 +58,7 @@ Accepted
 | 層 | ライフサイクル | 内容 |
 | --- | --- | --- |
 | persistent（永続層） | 常設。destroy しない | Route53 ホストゾーン、ACM 証明書、GitHub OAuth シークレット参照、Backstage backend secret、ECR、TechDocs 用 S3、GitHub OIDC ロール + permissions boundary、AWS Budgets |
-| shared（アカウント共有層） | 検証サイクル毎に再構築可 | VPC IPAM 本体とプール。アカウント横断の共有基盤のため、idp-golden-path 単体のライフサイクルに縛らない位置づけとして分離 |
+| ipam（アカウント共有層） | 検証サイクル毎に再構築可 | VPC IPAM 本体とプール。アカウント横断の共有基盤のため、idp-golden-path 単体のライフサイクルに縛らない位置づけとして分離（Issue #81 でディレクトリ名を `shared` から `ipam` に変更） |
 | ephemeral（エフェメラル層） | 検証毎に apply → destroy | VPC、ECS Fargate / ALB / タスク、Aurora Serverless v2、ALB 向け Route53 alias レコード（ALB の DNS 名は apply 毎に変わるためここに属する。ホストゾーン自体は data source で永続層を参照） |
 
 ### ネットワーク / CIDR — VPC IPAM からの払い出し
@@ -81,7 +81,7 @@ Accepted
 
 - **常時稼働させない。** terraform-hannibal / ticket-c2c-platform と同じ
   「検証時だけ apply → 動作確認（スクリーンショット等の証跡）→ destroy」の運用とする
-- ephemeral 層と shared 層は毎回 destroy / 再構築し、persistent 層のみ維持する
+- ephemeral 層と ipam 層は毎回 destroy / 再構築し、persistent 層のみ維持する
 - Aurora クラスタの create / destroy は各 10〜15 分かかるため、1 検証サイクルの所要時間として見込む
 
 ## 背景
@@ -173,7 +173,7 @@ Fargate タスク内で mkdocs を都度実行する構成は、コンテナに 
 
 ## 影響
 
-- `terraform/persistent/` / `terraform/shared/` / `terraform/ephemeral/` を新設し、それぞれ独立した S3 backend state を持つ
+- `terraform/persistent/` / `terraform/ipam/` / `terraform/ephemeral/` を新設し、それぞれ独立した S3 backend state を持つ
 - Backstage 側は GitHub auth provider の追加、本番 DB 接続（SSL + 長めのタイムアウト）、TechDocs S3 publisher 対応、
   カタログ実データのイメージ同梱（Dockerfile のビルドコンテキストをリポジトリルートに変更）が必要（別 Issue）
 - デプロイ・検証・destroy の手順は `docs/operations/deploy-runbook.md` に記録する
