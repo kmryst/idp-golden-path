@@ -42,3 +42,8 @@ output "github_actions_role_arn" {
   description = "GitHub Actions OIDC ロール ARN"
   value       = aws_iam_role.github_actions.arn
 }
+
+output "ci_permissions_boundary_arn" {
+  description = "CI ロールおよび ephemeral 層タスクロールに強制する permissions boundary の ARN"
+  value       = aws_iam_policy.github_actions_boundary.arn
+}
