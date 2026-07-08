@@ -1,19 +1,27 @@
+# 本番構成（ECS Fargate 上で app-config.yaml とマージして読み込む）
+# 設計判断は docs/adr/0009-production-deployment-on-ecs-fargate.md を参照。
+# 環境変数は Terraform（terraform/ephemeral/ecs.tf）が Secrets Manager / リソース属性から注入する。
+
 app:
-  # Should be the same as backend.baseUrl when using the `app-backend` plugin.
-  baseUrl: http://localhost:7007
+  baseUrl: https://idp-golden-path.click
 
 backend:
-  # Note that the baseUrl should be the URL that the browser and other clients
-  # should use when communicating with the backend, i.e. it needs to be
-  # reachable not just from within the backend host, but from all of your
-  # callers. When its value is "http://localhost:7007", it's strictly private
-  # and can't be reached by others.
-  baseUrl: http://localhost:7007
-  # The listener can also be expressed as a single <host>:<port> string. In this case we bind to
-  # all interfaces, the most permissive setting. The right value depends on your specific deployment.
+  baseUrl: https://idp-golden-path.click
   listen: ':7007'
 
-  # config options: https://node-postgres.com/apis/client
+  cors:
+    origin: https://idp-golden-path.click
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+
+  # backend-to-backend 認証鍵。永続層の Secrets Manager から注入し、
+  # apply 毎の再生成でトークンが無効化されるのを避ける（ADR 0009）
+  auth:
+    keys:
+      - secret: ${BACKEND_SECRET}
+
+  # Aurora Serverless v2（PostgreSQL 互換）
+  # resume（〜15 秒）を見込み、接続タイムアウト / プール取得タイムアウトを長めにする（ADR 0009）
   database:
     client: pg
     connection:
@@ -21,35 +29,63 @@ backend:
       port: ${POSTGRES_PORT}
       user: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
-      # https://node-postgres.com/features/ssl
-      # you can set the sslmode configuration option via the `PGSSLMODE` environment variable
-      # see https://www.postgresql.org/docs/current/libpq-ssl.html Table 33.1. SSL Mode Descriptions (e.g. require)
-      # ssl:
-      #   ca: # if you have a CA file and want to verify it you can uncomment this section
-      #     $file: <file-path>/ca/server.crt
+      ssl:
+        ca:
+          # コンテナ内では app-config と同じ /app に配置される（Dockerfile 参照）
+          $file: rds-global-bundle.pem
+    knexConfig:
+      acquireConnectionTimeout: 120000
+      pool:
+        min: 0
+        max: 10
+        acquireTimeoutMillis: 120000
+        createTimeoutMillis: 120000
 
 auth:
+  environment: production
+  session:
+    secret: ${AUTH_SESSION_SECRET}
   providers:
-    guest: {}
+    # 本番では guest を無効化する（null でベース設定のキーごと削除）
+    guest: null
+    github:
+      production:
+        clientId: ${AUTH_GITHUB_CLIENT_ID}
+        clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+        signIn:
+          resolvers:
+            # GitHub の username を catalog の User エンティティ名（kmryst）に解決する
+            - resolver: usernameMatchingUserEntityName
+
+# TechDocs は builder: external + S3 publisher（ADR 0009。生成は techdocs-cli で行う）
+techdocs:
+  builder: 'external'
+  publisher:
+    type: 'awsS3'
+    awsS3:
+      bucketName: ${TECHDOCS_S3_BUCKET_NAME}
+      region: ${AWS_REGION}
 
 catalog:
-  # Overrides the default list locations from app-config.yaml as these contain example data.
-  # See https://backstage.io/docs/features/software-catalog/#adding-components-to-the-catalog for more details
-  # on how to get entities into the catalog.
+  # ベース設定（ローカル相対パス + サンプルデータ）を本番用に置き換える。
+  # 対象ファイルは Dockerfile でイメージに同梱し、パスは backend の作業ディレクトリ /app 起点。
   locations:
-    # Local example data, replace this with your production config, these are intended for demo use only.
-    # File locations are relative to the backend process, typically in a deployed context, such as in a Docker container, this will be the root
+    # 組織エンティティ（User / Group）。GitHub OAuth のサインイン解決に必須
     - type: file
-      target: ./examples/entities.yaml
-
-    # Local example template
-    - type: file
-      target: ./examples/template/template.yaml
-      rules:
-        - allow: [Template]
-
-    # Local example organizational data
-    - type: file
-      target: ./examples/org.yaml
+      target: ./catalog/org.yaml
       rules:
         - allow: [User, Group]
+
+    # 既存リポジトリの Component / System 登録スタブ（ADR 0004）
+    - type: file
+      target: ./catalog/portfolio.yaml
+
+    # このリポジトリ自身（TechDocs 対象）
+    - type: file
+      target: ./catalog-info.yaml
+
+    # ゴールデンパステンプレート（ADR 0006）
+    - type: file
+      target: ./templates/service-baseline/template.yaml
+      rules:
+        - allow: [Template]

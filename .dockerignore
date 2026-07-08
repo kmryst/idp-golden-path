@@ -1,0 +1,10 @@
+# docker build のコンテキストはリポジトリルート（backstage/packages/backend/Dockerfile 参照）
+# ビルドに不要な巨大ディレクトリを除外する
+.git
+node_modules
+backstage/node_modules
+backstage/packages/*/node_modules
+backstage/plugins/*/node_modules
+backstage/packages/app/dist
+backstage/dist-types
+**/*.log
