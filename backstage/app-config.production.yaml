@@ -30,6 +30,7 @@ backend:
       user: ${POSTGRES_USER}
       password: ${POSTGRES_PASSWORD}
       ssl:
+        rejectUnauthorized: true
         ca:
           # コンテナ内では app-config と同じ /app に配置される（Dockerfile 参照）
           $file: rds-global-bundle.pem
