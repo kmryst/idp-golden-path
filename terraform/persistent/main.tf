@@ -231,6 +231,11 @@ data "aws_iam_policy_document" "github_actions_boundary" {
 
   # tfstate の読み取りは全層（ephemeral の remote_state が persistent を参照するため）。
   # 書き込みは ephemeral / shared のみに限定し、CI から persistent 層の state を壊せないようにする。
+  #
+  # 既知の受容リスク: terraform_remote_state は outputs だけでなく state ファイル全体を
+  # 取得するため、persistent state 内の random_password 生成値（backend secret / session 鍵）も
+  # CI ロールから読める。トリガーが workflow_dispatch のみ・実行されるのは main の workflow 定義・
+  # リポジトリ書き込み権限者が本人のみであることから受容する（ADR 0010）。
   statement {
     sid = "TfstateRead"
     actions = [
@@ -257,6 +262,12 @@ data "aws_iam_policy_document" "github_actions_boundary" {
 
   # VPC / IPAM（ec2）、ECS、ALB、Aurora、CloudWatch Logs。
   # これらはリソース単位の制限が実用的でないため、リージョン条件で境界を引く。
+  #
+  # - ec2 をタグ条件で絞らないのは、Describe 系・IPAM 系など多くの API が
+  #   リソースタグ条件を評価できず、apply が壊れやすいため（同一リージョンの
+  #   他プロジェクト VPC に届き得る点は既知の受容リスクとして ADR 0010 に記録）
+  # - logs は ephemeral 層が /ecs/idp-golden-path/* しか扱わないが、
+  #   DescribeLogGroups が "*" を要求するためまとめてリージョン境界で受容する
   statement {
     sid = "TerraformRegionalInfra"
     actions = [
