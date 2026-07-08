@@ -36,6 +36,9 @@ jobs:
           role-to-assume: ${{ vars.AWS_CICD_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # yarn cache は使わない: setup-node の yarn キャッシュは Yarn 4(berry) +
+      # サブディレクトリ構成での挙動が不安定で、デプロイは検証サイクル毎の
+      # 低頻度実行のため cold install を許容する
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -87,8 +90,13 @@ jobs:
           terraform plan -input=false -var "image_tag=${{ steps.image.outputs.tag }}" -out=tfplan
           terraform apply -input=false tfplan
 
+      # waiter は 1 回あたり最大 10 分（15 秒 x 40 回）。Aurora 初回作成後の
+      # タスク起動（イメージ pull + health check grace 180 秒）が 10 分を超え得るため
+      # 2 回まで許容し、実質 20 分を上限とする
       - name: Wait for ECS service to stabilize
-        run: aws ecs wait services-stable --cluster idp-golden-path --services backstage
+        run: |
+          aws ecs wait services-stable --cluster idp-golden-path --services backstage ||
+            aws ecs wait services-stable --cluster idp-golden-path --services backstage
 
       # builder: external のため、閲覧対象エンティティのドキュメントを CI から S3 へ publish する
       - name: Publish TechDocs to S3

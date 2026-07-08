@@ -85,6 +85,6 @@ jobs:
           check "ALB" "$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text | tr '\t' '\n' | grep idp-golden-path || true)"
           check "VPC" "$(aws ec2 describe-vpcs --filters Name=tag:Project,Values=idp-golden-path --query 'Vpcs[].VpcId' --output text)"
           check "NAT gateway" "$(aws ec2 describe-nat-gateways --filter Name=tag:Project,Values=idp-golden-path Name=state,Values=pending,available --query 'NatGateways[].NatGatewayId' --output text)"
-          check "IPAM" "$(aws ec2 describe-ipams --query 'Ipams[].IpamId' --output text)"
+          check "IPAM" "$(aws ec2 describe-ipams --filters Name=tag:Project,Values=idp-golden-path --query 'Ipams[].IpamId' --output text)"
 
           exit "$fail"
