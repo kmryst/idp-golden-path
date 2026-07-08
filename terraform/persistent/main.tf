@@ -66,26 +66,21 @@ resource "aws_acm_certificate" "main" {
   }
 }
 
+# 証明書は apex 単一ドメイン（SAN なし）のため検証レコードは常に 1 件。
+# for_each を unknown 値（domain_validation_options）に依存させると
+# ゾーンの terraform import 時の plan 評価が失敗するため、静的な単一リソースとする。
 resource "aws_route53_record" "cert_validation" {
-  for_each = {
-    for dvo in aws_acm_certificate.main.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
-
   zone_id         = aws_route53_zone.main.zone_id
-  name            = each.value.name
-  type            = each.value.type
+  name            = tolist(aws_acm_certificate.main.domain_validation_options)[0].resource_record_name
+  type            = tolist(aws_acm_certificate.main.domain_validation_options)[0].resource_record_type
   ttl             = 300
-  records         = [each.value.record]
+  records         = [tolist(aws_acm_certificate.main.domain_validation_options)[0].resource_record_value]
   allow_overwrite = true
 }
 
 resource "aws_acm_certificate_validation" "main" {
   certificate_arn         = aws_acm_certificate.main.arn
-  validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
+  validation_record_fqdns = [aws_route53_record.cert_validation.fqdn]
 }
 
 # --- ECR リポジトリ ----------------------------------------------------------
