@@ -418,6 +418,22 @@ data "aws_iam_policy_document" "github_actions_policy" {
       ]
     }
   }
+
+  # manage_master_user_password = true の aws_rds_cluster.main 作成時、CI ロール
+  # （呼び出し元）に secretsmanager:CreateSecret / TagResource が必要
+  # （AWS 公式ドキュメント "Permissions required for Secrets Manager integration"）。
+  # GetSecretValue は含めない（値の読み取りは task 実行ロールのみに限定する方針を維持）。
+  # Issue #74 参照。
+  statement {
+    sid = "RdsManagedSecretCreate"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:TagResource",
+    ]
+    resources = [
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:rds!cluster-*",
+    ]
+  }
 }
 
 # boundary は CI ロールと ephemeral 層のタスクロール群で共用する。
