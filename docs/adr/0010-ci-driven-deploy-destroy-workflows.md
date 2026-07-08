@@ -15,9 +15,9 @@ Accepted
 
 ### workflow の構成 — 手動起動のみの 2 本立て
 
-- `deploy.yml`（Deploy）: イメージ build & push → shared 層 apply → ephemeral 層 apply →
+- `deploy.yml`（Deploy）: イメージ build & push → ipam 層 apply → ephemeral 層 apply →
   TechDocs publish → HTTPS readiness の smoke check
-- `destroy.yml`（Destroy）: ephemeral 層 destroy → shared 層 destroy → 残存リソース確認
+- `destroy.yml`（Destroy）: ephemeral 層 destroy → ipam 層 destroy → 残存リソース確認
 - トリガーは両方とも **workflow_dispatch のみ**。スケジュール実行・push 連動は誤爆（意図しない課金リソース作成 /
   稼働環境の破棄）防止のため入れない
 - Destroy は確認入力（`destroy` のタイプ）を必須にする
@@ -29,9 +29,9 @@ Accepted
 
 - persistent 層に用意済みだった GitHub OIDC ロール（`idp-golden-path-github-actions`）を使う。
   ロール ARN は repo variable `AWS_CICD_ROLE_ARN`（terraform-hannibal と同じ命名）で参照する
-- ロールの権限は「イメージ push + TechDocs publish」から「ephemeral / shared 層の terraform apply / destroy」まで
+- ロールの権限は「イメージ push + TechDocs publish」から「ephemeral / ipam 層の terraform apply / destroy」まで
   拡張した（PR [#70](https://github.com/kmryst/idp-golden-path/pull/70)）。境界設計は次の通り
-  - **tfstate**: 読み取りは全層、書き込みは `ephemeral/*` / `shared/*` キーのみ。CI から persistent 層の state は壊せない
+  - **tfstate**: 読み取りは全層、書き込みは `ephemeral/*` / `ipam/*` キーのみ。CI から persistent 層の state は壊せない
   - **ec2 / ecs / elasticloadbalancing / rds / logs**: `aws:RequestedRegion` 条件でリージョン境界を引く
   - **IAM**: ロール管理は `role/idp-golden-path-*` に名前限定。`iam:CreateRole` / `iam:PutRolePolicy` は
     `iam:PermissionsBoundary` 条件で「CI 自身と同じ boundary を付けたロール」に対してのみ許可し、

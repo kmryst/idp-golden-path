@@ -1,7 +1,7 @@
 # ephemeral 層: 検証時のみ apply → 動作確認 → destroy するリソース群
 # 設計判断は ADR 0009 を参照。
 #
-# - VPC（shared 層の IPAM プールから CIDR 払い出し）
+# - VPC（ipam 層の IPAM プールから CIDR 払い出し）
 # - ECS Fargate + ALB（ALB は public、タスクは private）
 # - Aurora Serverless v2（PostgreSQL 互換）
 # - Route53 の ALB 向け alias レコード（ALB の DNS 名は apply 毎に変わるためこの層に属する）
@@ -45,11 +45,11 @@ data "terraform_remote_state" "persistent" {
   }
 }
 
-data "terraform_remote_state" "shared" {
+data "terraform_remote_state" "ipam" {
   backend = "s3"
   config = {
     bucket = "idp-golden-path-tfstate-ba25cd9e"
-    key    = "shared/terraform.tfstate"
+    key    = "ipam/terraform.tfstate"
     region = "ap-northeast-1"
   }
 }

@@ -1,7 +1,7 @@
-# VPC は shared 層の IPAM プールから /16 を払い出す（ADR 0009）
+# VPC は ipam 層の IPAM プールから /16 を払い出す（ADR 0009）
 
 resource "aws_vpc" "main" {
-  ipv4_ipam_pool_id   = data.terraform_remote_state.shared.outputs.ipam_pool_id
+  ipv4_ipam_pool_id   = data.terraform_remote_state.ipam.outputs.ipam_pool_id
   ipv4_netmask_length = 16
 
   enable_dns_support   = true

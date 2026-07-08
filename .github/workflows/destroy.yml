@@ -1,7 +1,7 @@
 # 本番相当構成の環境（検証サイクルの破棄側）を on-demand で 1 クリック破棄する workflow（ADR 0010）。
 #
 # - トリガーは workflow_dispatch のみ。確認入力（"destroy"）を必須にして誤爆を防ぐ
-# - ephemeral 層 → shared 層の順に destroy し、最後に残存リソースを確認する
+# - ephemeral 層 → ipam 層の順に destroy し、最後に残存リソースを確認する
 # - persistent 層（Route53 / ACM / ECR / TechDocs S3 / OIDC ロール / Budgets）は破棄しない
 
 name: Destroy
@@ -54,8 +54,8 @@ jobs:
           terraform destroy -auto-approve -input=false -var "image_tag=unused"
 
       # IPAM も検証サイクル毎に再構築する方針（ADR 0009）
-      - name: Destroy shared layer (IPAM)
-        working-directory: terraform/shared
+      - name: Destroy ipam layer
+        working-directory: terraform/ipam
         run: |
           set -euo pipefail
           terraform init -input=false
