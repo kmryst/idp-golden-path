@@ -1,6 +1,6 @@
 # ネットワーク CIDR 台帳
 
-AWS アカウント 258632448142（ap-northeast-1）内のプロジェクト横断の VPC CIDR 割り当て台帳。
+AWS アカウント（ap-northeast-1）内のプロジェクト横断の VPC CIDR 割り当て台帳。
 idp-golden-path の CIDR 管理方針は [ADR 0009](../adr/0009-production-deployment-on-ecs-fargate.md) を参照。
 
 ## 割り当て一覧

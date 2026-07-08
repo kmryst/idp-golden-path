@@ -63,7 +63,7 @@ Accepted
 
 ### ネットワーク / CIDR — VPC IPAM からの払い出し
 
-- 同一 AWS アカウント（258632448142 / ap-northeast-1）内に専用 VPC を新規に切る
+- 同一 AWS アカウント（ap-northeast-1）内に専用 VPC を新規に切る
   （ticket-c2c-platform / terraform-hannibal と同じ「state 分離 + IAM 境界」の粒度）
 - 新規 VPC の CIDR は IPAM プールから払い出す。プールの CIDR 空間は、既存 2 プロジェクトが重複使用している
   `10.0.0.0/16` を含まない `10.16.0.0/12` とする
