@@ -26,3 +26,20 @@ updates:
         dependency-type: "development"
         patterns:
           - "*"
+
+  # backstage/ は Yarn workspaces。yarn.lock のあるルート 1 エントリで
+  # packages/* / plugins/* の全 workspace がカバーされる
+  # （package-ecosystem は Yarn でも "npm" のままでよい）
+  - package-ecosystem: "npm"
+    directory: "/backstage"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:15"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    groups:
+      npm-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
