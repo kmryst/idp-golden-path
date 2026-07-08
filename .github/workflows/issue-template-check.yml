@@ -19,6 +19,17 @@ permissions:
   issues: write
   contents: read
 
+# opened / edited / labeled / unlabeled が短時間に並行実行されると、古い payload の run が
+# 後勝ちしてコメントの二重作成やラベルのフラッピングを起こし得るため、Issue 番号単位で直列化する。
+# 実行中 run を cancel すると「ラベル付与後・コメント投稿前」のような中途半端な状態で
+# 止まり得るため cancel しない（後続 run は完了を待って実行される）。
+# workflow_call 経由の場合、reusable workflow 側の workflow レベル concurrency は適用されず
+# 呼び出し元 caller の concurrency が使われるため、caller 側にも同等の設定を置く（ADR-0008）。
+# github.run_id は issue コンテキストが取れない場合のフォールバック（run 単位で実質 no-op）
+concurrency:
+  group: issue-template-check-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   issue-template-check:
     name: Issue Template Check
@@ -162,12 +173,18 @@ jobs:
 
             if (valid) {
               if (effectiveLabels.includes(needsTemplateLabel)) {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: issue.number,
-                  name: needsTemplateLabel,
-                });
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    name: needsTemplateLabel,
+                  });
+                } catch (error) {
+                  if (error.status !== 404) {
+                    throw error;
+                  }
+                }
               }
               core.info('Issue body matches the required template headings.');
               return;

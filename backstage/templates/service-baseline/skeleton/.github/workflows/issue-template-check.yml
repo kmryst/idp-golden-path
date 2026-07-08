@@ -14,6 +14,13 @@ permissions:
   issues: write
   contents: read
 
+concurrency:
+  group: issue-template-check-${{ github.event.issue.number || github.run_id }}
+  # opened / edited / labeled / unlabeled の並行実行による古い payload の後勝ち
+  # （コメント二重作成・ラベルのフラッピング）を避けるため Issue 番号単位で直列化する。
+  # 実行中 run の cancel は中途半端なラベル・コメント状態を残し得るため cancel しない。
+  cancel-in-progress: false
+
 jobs:
   issue-template-check:
     name: Issue Template Check
