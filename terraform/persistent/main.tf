@@ -76,6 +76,14 @@ resource "aws_route53_record" "cert_validation" {
   ttl             = 300
   records         = [tolist(aws_acm_certificate.main.domain_validation_options)[0].resource_record_value]
   allow_overwrite = true
+
+  lifecycle {
+    # SAN を追加する場合はこの静的単一レコードの前提が崩れるため明示的に失敗させる
+    precondition {
+      condition     = length(aws_acm_certificate.main.domain_validation_options) == 1
+      error_message = "証明書の検証レコードが複数必要です。cert_validation を複数レコード対応に変更してください。"
+    }
+  }
 }
 
 resource "aws_acm_certificate_validation" "main" {
