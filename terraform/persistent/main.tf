@@ -391,27 +391,12 @@ data "aws_iam_policy_document" "github_actions_policy" {
     actions   = ["route53:GetChange"]
     resources = ["arn:aws:route53:::change/*"]
   }
-}
 
-# boundary は CI ロールと ephemeral 層のタスクロール群で共用する。
-# CI の inline policy には secretsmanager が無いため、CI ロール自身は秘密値を読めない。
-# タスク実行ロール（inline で GetSecretValue を持つ）の実効権限を成立させるために
-# boundary 側にのみ TaskRuntimeSecrets を持たせる。
-data "aws_iam_policy_document" "github_actions_boundary" {
-  source_policy_documents = [data.aws_iam_policy_document.github_actions_policy.json]
-
-  statement {
-    sid     = "TaskRuntimeSecrets"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:idp-golden-path/*",
-      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:rds!cluster-*",
-    ]
-  }
-
-  # ephemeral 層の aws_rds_cluster.main が storage_encrypted / manage_master_user_password
-  # で暗黙利用する AWS 管理キー（デフォルトエイリアス）向け。Issue #74 参照。
-  # 対象を2つの既定エイリアスに限定し、権限の過剰拡大を避ける。
+  # ephemeral 層の aws_rds_cluster.main を CI ロール自身（terraform apply 実行者）が
+  # 作成するため、identity policy 側にも必要（permissions boundary は上限のみで
+  # 実際の許可には identity policy 側の Allow が必須。Issue #74 参照）。
+  # storage_encrypted / manage_master_user_password が暗黙利用する AWS 管理キー
+  # （デフォルトエイリアス）向けに、対象を2つの既定エイリアスに限定する。
   statement {
     sid = "DefaultKmsKeyForRdsAndSecretsManager"
     actions = [
@@ -432,6 +417,23 @@ data "aws_iam_policy_document" "github_actions_boundary" {
         "alias/aws/secretsmanager",
       ]
     }
+  }
+}
+
+# boundary は CI ロールと ephemeral 層のタスクロール群で共用する。
+# CI の inline policy には secretsmanager が無いため、CI ロール自身は秘密値を読めない。
+# タスク実行ロール（inline で GetSecretValue を持つ）の実効権限を成立させるために
+# boundary 側にのみ TaskRuntimeSecrets を持たせる。
+data "aws_iam_policy_document" "github_actions_boundary" {
+  source_policy_documents = [data.aws_iam_policy_document.github_actions_policy.json]
+
+  statement {
+    sid     = "TaskRuntimeSecrets"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:idp-golden-path/*",
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:rds!cluster-*",
+    ]
   }
 }
 
