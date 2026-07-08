@@ -39,6 +39,20 @@ updates:
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 5
     groups:
+      # react / react-dom / react-router 等は密結合しており、単独更新すると
+      # 相方が取り残されて CI が壊れる（PR #53 / #54 / #56 で発生）。
+      # 1 グループにまとめて 1 PR で更新されるようにする。
+      # Dependabot は「複数グループにマッチする依存は最初にマッチした
+      # グループに入る」（first-match-wins）ため、@types/react* を npm-dev では
+      # なく react グループに入れるべく、react グループを npm-dev より前に置く。
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router"
+          - "react-router-*"
+          - "@types/react"
+          - "@types/react-dom"
       npm-dev:
         dependency-type: "development"
         patterns:
