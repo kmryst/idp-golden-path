@@ -25,7 +25,7 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 新規サービスリポジトリが以下の運用基盤つきで GitHub 上に作成され、Software Catalog に登録される。
 
 - CLAUDE.md / CONTRIBUTING.md（軽運用・厳密運用 GitHub Flow、必須 4 ラベル、Conventional Commits）
-- ラベル定義（`.github/labels.yml`）と CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels。
+- ラベル定義（`.github/labels.yml`）と CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check。
   実体は本リポジトリの reusable workflows をタグ固定 `@v1` で参照、[ADR 0008](./docs/adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）
 - Issue / PR テンプレートと helper scripts（`scripts/github/`）
 - ADR 運用（生成経緯を記録した ADR-0001 つき）と TechDocs / Catalog 対応（`mkdocs.yml` / `catalog-info.yaml`）
