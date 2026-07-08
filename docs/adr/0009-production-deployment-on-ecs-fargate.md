@@ -187,5 +187,6 @@ Fargate タスク内で mkdocs を都度実行する構成は、コンテナに 
 - [ADR 0003](./0003-backstage-app-layout-and-local-dev-baseline.md) — 本 ADR が保留を引き継いだローカル開発基準
 - [ADR 0005](./0005-techdocs-local-generator.md) — TechDocs のローカル構成（本番配信は本 ADR で S3 publisher に確定）
 - [ADR 0007](./0007-scaffolder-github-app-authentication.md) — GitHub App を見送った経緯（認証でも同じ判断を踏襲）
+- [ADR 0010](./0010-ci-driven-deploy-destroy-workflows.md) — deploy / destroy の実行手段を GitHub Actions（workflow_dispatch）に変更
 - [CIDR 台帳](../operations/network-cidr-ledger.md)
 - Issue [#61](https://github.com/kmryst/idp-golden-path/issues/61)

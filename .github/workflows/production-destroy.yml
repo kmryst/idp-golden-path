@@ -1,0 +1,90 @@
+# 本番デプロイ（検証サイクルの破棄側）を 1 クリックで実行する workflow（ADR 0010）。
+#
+# - トリガーは workflow_dispatch のみ。確認入力（"destroy"）を必須にして誤爆を防ぐ
+# - ephemeral 層 → shared 層の順に destroy し、最後に残存リソースを確認する
+# - persistent 層（Route53 / ACM / ECR / TechDocs S3 / OIDC ロール / Budgets）は破棄しない
+
+name: Production Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+        type: string
+
+# Deploy と Destroy の同時実行で state が壊れないよう、両 workflow で同じ group を使う
+concurrency:
+  group: production-lifecycle
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  TERRAFORM_VERSION: "1.12.1"
+
+permissions:
+  id-token: write # GitHub OIDC トークン発行に必須
+  contents: read
+
+jobs:
+  destroy:
+    name: Destroy Production
+    runs-on: ubuntu-latest
+    if: inputs.confirm == 'destroy'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_CICD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # image_tag は destroy では参照されないが required variable のためダミー値を渡す
+      - name: Destroy ephemeral layer
+        working-directory: terraform/ephemeral
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+          terraform destroy -auto-approve -input=false -var "image_tag=unused"
+
+      # IPAM も検証サイクル毎に再構築する方針（ADR 0009）
+      - name: Destroy shared layer (IPAM)
+        working-directory: terraform/shared
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+          terraform destroy -auto-approve -input=false
+
+      - name: Verify no residual resources
+        run: |
+          set -euo pipefail
+          fail=0
+
+          check() {
+            local label="$1" result="$2"
+            if [ -n "$result" ]; then
+              echo "::error::residual $label: $result"
+              echo "- :x: $label: \`$result\`" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+            else
+              echo "- :white_check_mark: $label: none" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
+          echo "## Residual resource check" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          check "ECS cluster" "$(aws ecs list-clusters --query 'clusterArns' --output text | tr '\t' '\n' | grep idp-golden-path || true)"
+          check "RDS cluster" "$(aws rds describe-db-clusters --query 'DBClusters[].DBClusterIdentifier' --output text | tr '\t' '\n' | grep idp-golden-path || true)"
+          check "ALB" "$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text | tr '\t' '\n' | grep idp-golden-path || true)"
+          check "VPC" "$(aws ec2 describe-vpcs --filters Name=tag:Project,Values=idp-golden-path --query 'Vpcs[].VpcId' --output text)"
+          check "NAT gateway" "$(aws ec2 describe-nat-gateways --filter Name=tag:Project,Values=idp-golden-path Name=state,Values=pending,available --query 'NatGateways[].NatGatewayId' --output text)"
+          check "IPAM" "$(aws ec2 describe-ipams --filters Name=tag:Project,Values=idp-golden-path --query 'Ipams[].IpamId' --output text)"
+
+          exit "$fail"

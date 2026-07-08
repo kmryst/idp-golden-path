@@ -411,8 +411,11 @@ data "aws_iam_policy_document" "github_actions_boundary" {
 }
 
 resource "aws_iam_policy" "github_actions_boundary" {
-  name        = "idp-golden-path-github-actions-boundary"
-  description = "Permissions boundary for idp-golden-path GitHub Actions role and ephemeral task roles"
+  name = "idp-golden-path-github-actions-boundary"
+  # NOTE: description は AWS API 上イミュータブルで、変更すると replace（destroy→create）を
+  # 強制される。boundary としてアタッチ中のポリシーは削除できず apply が失敗するため、
+  # 初回作成時の文言から変更しない（実際は ephemeral 層タスクロールとも共用。ADR 0010）
+  description = "Permissions boundary for idp-golden-path GitHub Actions role"
   policy      = data.aws_iam_policy_document.github_actions_boundary.json
 }
 

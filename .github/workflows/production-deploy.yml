@@ -1,0 +1,132 @@
+# 本番デプロイ（検証サイクルの構築側）を 1 クリックで実行する workflow（ADR 0010）。
+#
+# - トリガーは workflow_dispatch のみ。スケジュール実行・push 連動は誤爆防止のため入れない
+# - AWS 認証は persistent 層の GitHub OIDC ロール（repo variable: AWS_CICD_ROLE_ARN）
+# - 手順の正本は docs/operations/production-deploy-runbook.md
+# - persistent 層はこの workflow では触らない（ローカルからの手動 apply のみ）
+
+name: Production Deploy
+
+on:
+  workflow_dispatch:
+
+# Deploy と Destroy の同時実行で state が壊れないよう、両 workflow で同じ group を使う
+concurrency:
+  group: production-lifecycle
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  TERRAFORM_VERSION: "1.12.1"
+  APP_URL: https://idp-golden-path.click
+
+permissions:
+  id-token: write # GitHub OIDC トークン発行に必須
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_CICD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # yarn cache は使わない: setup-node の yarn キャッシュは Yarn 4(berry) +
+      # サブディレクトリ構成での挙動が不安定で、デプロイは検証サイクル毎の
+      # 低頻度実行のため cold install を許容する
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Enable corepack (yarn 4)
+        run: corepack enable
+
+      - name: Build Backstage backend
+        working-directory: backstage
+        run: |
+          set -euo pipefail
+          yarn install --immutable
+          yarn tsc
+          yarn build:backend
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ビルドコンテキストはリポジトリルート（カタログ実データ同梱のため。ADR 0009）
+      - name: Build and push image
+        id: image
+        run: |
+          set -euo pipefail
+          ECR_URL="${{ steps.login-ecr.outputs.registry }}/idp-golden-path-backstage"
+          TAG="${GITHUB_SHA::7}"
+          docker build -t "$ECR_URL:$TAG" -f backstage/packages/backend/Dockerfile .
+          docker push "$ECR_URL:$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Apply shared layer (IPAM)
+        working-directory: terraform/shared
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+          terraform plan -input=false -out=tfplan
+          terraform apply -input=false tfplan
+
+      - name: Apply ephemeral layer
+        working-directory: terraform/ephemeral
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+          terraform plan -input=false -var "image_tag=${{ steps.image.outputs.tag }}" -out=tfplan
+          terraform apply -input=false tfplan
+
+      # waiter は 1 回あたり最大 10 分（15 秒 x 40 回）。Aurora 初回作成後の
+      # タスク起動（イメージ pull + health check grace 180 秒）が 10 分を超え得るため
+      # 2 回まで許容し、実質 20 分を上限とする
+      - name: Wait for ECS service to stabilize
+        run: |
+          aws ecs wait services-stable --cluster idp-golden-path --services backstage ||
+            aws ecs wait services-stable --cluster idp-golden-path --services backstage
+
+      # builder: external のため、閲覧対象エンティティのドキュメントを CI から S3 へ publish する
+      - name: Publish TechDocs to S3
+        run: |
+          set -euo pipefail
+          pip install --user mkdocs mkdocs-techdocs-core
+          TECHDOCS_BUCKET="idp-golden-path-techdocs-$(aws sts get-caller-identity --query Account --output text)"
+          npx --yes @techdocs/cli generate --no-docker --source-dir . --output-dir /tmp/techdocs-site
+          npx --yes @techdocs/cli publish --publisher-type awsS3 \
+            --storage-name "$TECHDOCS_BUCKET" \
+            --entity default/Component/idp-golden-path \
+            --directory /tmp/techdocs-site
+
+      - name: Smoke check (HTTPS readiness)
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/.backstage/health/v1/readiness" || true)
+            echo "attempt $i/30: HTTP $code"
+            if [ "$code" = "200" ]; then
+              {
+                echo "## Production Deploy"
+                echo ""
+                echo "- image tag: \`${{ steps.image.outputs.tag }}\`"
+                echo "- readiness: \`$APP_URL/.backstage/health/v1/readiness\` -> 200"
+                echo "- 動作検証（OAuth ログイン / Catalog / TechDocs）は runbook のステップに従い手動で行う"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::readiness check did not return 200 within 10 minutes"
+          exit 1
