@@ -47,3 +47,4 @@
 | [0006](./0006-scaffolder-service-baseline-template.md) | Accepted | Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する |
 | [0007](./0007-scaffolder-github-app-authentication.md) | Accepted | Scaffolder の GitHub 連携は個人 PAT を継続し、GitHub App へは移行しない |
 | [0008](./0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) | Accepted | CI ガードレールを reusable workflows として提供し、タグ固定（`@v1`）で参照する |
+| [0009](./0009-production-deployment-on-ecs-fargate.md) | Accepted | 本番デプロイは ECS Fargate + Aurora Serverless v2 + GitHub OAuth とし、検証時のみ apply する 3 層 state 分離で運用する |

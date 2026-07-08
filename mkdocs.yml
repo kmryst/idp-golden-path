@@ -14,9 +14,11 @@ nav:
       - 0006 Scaffolder ガバナンスベースライン: adr/0006-scaffolder-service-baseline-template.md
       - 0007 Scaffolder の GitHub 連携は PAT を継続: adr/0007-scaffolder-github-app-authentication.md
       - 0008 CI ガードレールの reusable workflows 化: adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md
+      - 0009 本番デプロイ構成（ECS Fargate + 3層state分離）: adr/0009-production-deployment-on-ecs-fargate.md
   - 運用:
       - branch protection: operations/branch-protection.md
       - セキュリティスキャン: operations/security-scanning.md
       - Scaffolder GitHub 連携: operations/scaffolder-github-integration.md
+      - ネットワーク CIDR 台帳: operations/network-cidr-ledger.md
 plugins:
   - techdocs-core

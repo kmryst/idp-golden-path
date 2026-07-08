@@ -58,4 +58,5 @@ TechDocs の generator はデフォルトで `runIn: docker`（`spotify/techdocs
 
 - [ADR 0003](./0003-backstage-app-layout-and-local-dev-baseline.md) — ローカル開発の基準構成
 - [ADR 0004](./0004-catalog-registration-via-local-stub-locations.md) — カタログ登録スタブ
+- [ADR 0009](./0009-production-deployment-on-ecs-fargate.md) — 本番の TechDocs 配信を builder: external + S3 publisher に確定（本 ADR はローカル開発の基準構成として引き続き有効）
 - Issue [#22](https://github.com/kmryst/idp-golden-path/issues/22)
