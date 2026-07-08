@@ -9,6 +9,8 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 運用基盤（GitHub Flow・CI ガードレール・branch protection・ADR 運用）、Software Catalog / TechDocs に続き、核心機能であるゴールデンパステンプレート（Scaffolder）を実装した。
 本番デプロイ構成は ECS Fargate + Aurora Serverless v2 + GitHub OAuth（`https://idp-golden-path.click`）で確定済み（[ADR 0009](./docs/adr/0009-production-deployment-on-ecs-fargate.md) 参照）。
 常時稼働はさせず、検証時のみ apply → 動作確認 → destroy するライフサイクルで運用する（persistent 層のみ常設）。
+deploy / destroy の実行はローカル CLI ではなく、GitHub Actions の workflow_dispatch（`deploy.yml` / `destroy.yml`、GitHub OIDC 認証）で CI 駆動する（[ADR 0010](./docs/adr/0010-ci-driven-deploy-destroy-workflows.md) 参照）。
+2026-07-08 に実 AWS 環境で deploy → 動作確認 → destroy の 1 サイクルを完走し、検証済み（[検証記録](./docs/operations/verification/2026-07-08-production-deploy/README.md)）。
 
 ## ローカル起動
 
@@ -20,6 +22,14 @@ yarn install
 export GITHUB_TOKEN="$(gh auth token)"   # Scaffolder の publish:github を使う場合
 yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 ```
+
+## 本番デプロイ
+
+本番環境（AWS）への deploy / destroy は、ローカルでの `terraform apply` ではなく、
+GitHub Actions の **Deploy** / **Destroy** workflow（workflow_dispatch）をワンクリックで起動して実行する
+（[ADR 0010](./docs/adr/0010-ci-driven-deploy-destroy-workflows.md) 参照）。
+検証時のみ deploy し、動作確認が済んだら destroy することで、アイドル状態のインフラを残さない。
+手順の詳細は [docs/operations/deploy-runbook.md](./docs/operations/deploy-runbook.md) を参照。
 
 ## ゴールデンパステンプレート（Scaffolder）
 
@@ -49,10 +59,13 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 - [ADR 0005](./docs/adr/0005-techdocs-local-generator.md) — TechDocs はローカル builder + ホスト mkdocs（runIn local）で運用する
 - [ADR 0006](./docs/adr/0006-scaffolder-service-baseline-template.md) — Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する
 - [ADR 0007](./docs/adr/0007-scaffolder-github-app-authentication.md) — Scaffolder の GitHub 連携は個人 PAT を継続し、GitHub App へは移行しない
+- [ADR 0008](./docs/adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) — CI ガードレールを reusable workflows として提供し、タグ固定（`@v1`）で参照する
 - [ADR 0009](./docs/adr/0009-production-deployment-on-ecs-fargate.md) — 本番デプロイは ECS Fargate + Aurora Serverless v2 + GitHub OAuth とし、検証時のみ apply する 3 層 state 分離で運用する
+- [ADR 0010](./docs/adr/0010-ci-driven-deploy-destroy-workflows.md) — 本番デプロイ / 破棄は workflow_dispatch の GitHub Actions で実行する
 
 ## 開発への参加
 
 Issue / Branch / Commit / PR / Label の運用ルールは [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
 main ブランチ保護設定は [docs/operations/branch-protection.md](./docs/operations/branch-protection.md) に記録している。
 CI セキュリティスキャン（Gitleaks / Dependency Audit / CodeQL）の運用は [docs/operations/security-scanning.md](./docs/operations/security-scanning.md) に記録している。
+本番デプロイ / destroy の実施手順は [docs/operations/deploy-runbook.md](./docs/operations/deploy-runbook.md) に記録している。
