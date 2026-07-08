@@ -10,7 +10,8 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 本番デプロイ構成は ECS Fargate + Aurora Serverless v2 + GitHub OAuth（`https://idp-golden-path.click`）で確定済み（[ADR 0009](./docs/adr/0009-production-deployment-on-ecs-fargate.md) 参照）。
 常時稼働はさせず、検証時のみ apply → 動作確認 → destroy するライフサイクルで運用する（persistent 層のみ常設）。
 deploy / destroy の実行はローカル CLI ではなく、GitHub Actions の workflow_dispatch（`deploy.yml` / `destroy.yml`、GitHub OIDC 認証）で CI 駆動する（[ADR 0010](./docs/adr/0010-ci-driven-deploy-destroy-workflows.md) 参照）。
-2026-07-08 に実 AWS 環境で deploy → 動作確認 → destroy の 1 サイクルを完走し、検証済み（[検証記録](./docs/operations/verification/2026-07-08-production-deploy/README.md)）。
+2026-07-08 に実 AWS 環境で deploy 成功・readiness・GitHub OAuth リダイレクト配線・destroy まで確認済み
+（実ユーザー認証情報が必要な Catalog / TechDocs の目視確認は未実施。[検証記録](./docs/operations/verification/2026-07-08-production-deploy/README.md)）。
 
 ## ローカル起動
 
@@ -26,7 +27,8 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 ## 本番デプロイ
 
 本番環境（AWS）への deploy / destroy は、ローカルでの `terraform apply` ではなく、
-GitHub Actions の **Deploy** / **Destroy** workflow（workflow_dispatch）をワンクリックで起動して実行する
+GitHub Actions の **Deploy** / **Destroy** workflow（workflow_dispatch による手動起動）で実行する。
+Destroy は誤爆防止のため確認入力（`destroy` のタイプ）を必須にしている
 （[ADR 0010](./docs/adr/0010-ci-driven-deploy-destroy-workflows.md) 参照）。
 検証時のみ deploy し、動作確認が済んだら destroy することで、アイドル状態のインフラを残さない。
 手順の詳細は [docs/operations/deploy-runbook.md](./docs/operations/deploy-runbook.md) を参照。
