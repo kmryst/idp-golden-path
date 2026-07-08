@@ -13,7 +13,7 @@ ${{ values.description }}
 | `CLAUDE.md` | AI Agent（Claude Code）向けの作業ルール入口 |
 | `CONTRIBUTING.md` | Issue / Branch / Commit / PR / Label / 軽運用・厳密運用の正本 |
 | `.github/labels.yml` | ラベル定義の正本（push で自動同期） |
-| `.github/workflows/` | PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels |
+| `.github/workflows/` | PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels（実体は [idp-golden-path の reusable workflows](https://github.com/kmryst/idp-golden-path/tree/main/.github/workflows) をタグ固定 `@v1` で参照。更新は Dependabot のバージョンアップ PR で取り込む） |
 | `.github/pull_request_template.md` / `ISSUE_TEMPLATE/` | PR / Issue テンプレート |
 | `scripts/github/` | Issue / PR 作成・ラベル同期・ブランチ cleanup の helper |
 | `docs/adr/` | Architecture Decision Record（0001 に生成経緯を記録済み） |

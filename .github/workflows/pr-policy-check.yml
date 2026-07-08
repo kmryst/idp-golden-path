@@ -3,6 +3,10 @@
 # 移植元: kmryst/terraform-hannibal / kmryst/ticket-c2c-platform の pr-policy-check.yml
 # 厳密運用 path 判定は本リポジトリの CONTRIBUTING.md「厳密運用」定義に合わせている
 # workflow name は required status check（job name）と揃える
+# このファイルは本リポジトリの PR チェックであると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/pr-policy-check.yml@v1` で呼び出す
+# reusable workflow でもある（バージョニング方針は ADR-0008）
+# 厳密運用 path はリポジトリごとに異なるため `strict-paths-regex` input で上書きできる
 
 name: PR Policy Check
 
@@ -10,6 +14,14 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
     branches: [main]
+  workflow_call:
+    inputs:
+      strict-paths-regex:
+        description: >-
+          変更パスから厳密運用と判定する拡張正規表現。
+          未指定時は本リポジトリの既定値 `^(\.github/workflows/|scripts/github/|terraform/)` を使う
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -41,7 +53,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STRICT_PATHS_REGEX: ${{ inputs.strict-paths-regex }}
         run: |
+          # 厳密運用 path 判定の既定値（pull_request トリガー時、input 未指定時）
+          strict_paths_regex="${STRICT_PATHS_REGEX:-^(\.github/workflows/|scripts/github/|terraform/)}"
+
           # labels_fetch_ok: いずれかの試行でラベル取得に成功したか（最終試行のみの結果ではない）。
           # 途中の試行で取得済みなら、最終試行が API 障害でも直近の取得結果でラベル検証を行う。
           labels_fetch_ok=false
@@ -141,7 +157,7 @@ jobs:
 
           changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
           strict_by_paths=false
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/|scripts/github/|terraform/)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq "$strict_paths_regex"; then
             strict_by_paths=true
           fi
 
@@ -153,9 +169,13 @@ jobs:
             cost_val=$(echo "$labels_json" | jq -r '.[] | select(. == "cost:medium" or . == "cost:large")' | head -1)
             [ -n "$risk_val" ] && strict_reasons+=("\`${risk_val}\` ラベル")
             [ -n "$cost_val" ] && strict_reasons+=("\`${cost_val}\` ラベル")
-            printf '%s\n' "$changed_files" | grep -q '^\.github/workflows/' && strict_reasons+=("\`\.github/workflows/**\` 変更")
-            printf '%s\n' "$changed_files" | grep -q '^scripts/github/'     && strict_reasons+=("\`scripts/github/**\` 変更")
-            printf '%s\n' "$changed_files" | grep -q '^terraform/'          && strict_reasons+=("\`terraform/**\` 変更")
+            if [ "$strict_by_paths" = true ]; then
+              # 厳密運用 path はリポジトリごとに input で変わるため、個別 path をハードコードせず
+              # 一致した変更ファイルをそのまま理由として列挙する
+              while IFS= read -r matched_file; do
+                strict_reasons+=("厳密運用対象パス \`${matched_file}\` の変更")
+              done < <(printf '%s\n' "$changed_files" | grep -E "$strict_paths_regex" | head -5)
+            fi
           fi
 
           # Issue link check

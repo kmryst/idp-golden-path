@@ -13,6 +13,7 @@ nav:
       - 0005 TechDocs ローカル構成: adr/0005-techdocs-local-generator.md
       - 0006 Scaffolder ガバナンスベースライン: adr/0006-scaffolder-service-baseline-template.md
       - 0007 Scaffolder の GitHub 連携は PAT を継続: adr/0007-scaffolder-github-app-authentication.md
+      - 0008 CI ガードレールの reusable workflows 化: adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md
   - 運用:
       - branch protection: operations/branch-protection.md
       - セキュリティスキャン: operations/security-scanning.md

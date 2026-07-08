@@ -84,7 +84,6 @@ spec:
         url: ./skeleton
         copyWithoutTemplating:
           - .github/workflows/**
-          - .github/actions/**
           - scripts/github/**
         values:
           name: ${{ parameters.name }}
