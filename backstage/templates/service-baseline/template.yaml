@@ -8,7 +8,7 @@ metadata:
   description: |
     新規サービスリポジトリを、確立済みの運用基盤つきで作成します。
     CLAUDE.md / CONTRIBUTING.md（軽運用・厳密運用 GitHub Flow）、ラベル定義、
-    CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels）、
+    CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check）、
     Issue / PR テンプレート、helper scripts、ADR 運用、TechDocs / Catalog 対応が最初から有効です。
   tags:
     - golden-path
