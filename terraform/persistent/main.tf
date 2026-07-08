@@ -179,13 +179,26 @@ resource "aws_secretsmanager_secret_version" "backstage_backend" {
 }
 
 # --- GitHub OIDC ロール + permissions boundary ---------------------------------
-# 将来の CI（イメージ push / TechDocs publish）用。アカウント共通の OIDC provider を参照する。
+# CI 駆動 deploy / destroy 用（ADR 0010）。アカウント共通の OIDC provider を参照する。
+# イメージ push / TechDocs publish に加えて、ephemeral / shared 層の
+# terraform apply / destroy に必要な権限を持つ。persistent 層の tfstate には書き込めない。
 
 data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
 }
 
-data "aws_iam_policy_document" "github_actions_boundary" {
+locals {
+  # bootstrap 時に手動作成した state バケット（runbook 参照）
+  tfstate_bucket_arn = "arn:aws:s3:::idp-golden-path-tfstate-ba25cd9e"
+
+  # boundary ポリシー自身の ARN。policy document 内の条件から参照すると
+  # 循環参照になるため、名前固定で文字列として組み立てる
+  github_actions_boundary_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/idp-golden-path-github-actions-boundary"
+}
+
+# CI ロールの inline policy 本体。boundary はこれに TaskRuntimeSecrets を加えたもの
+# （タスクロールにも同じ boundary を強制するため。後述）。
+data "aws_iam_policy_document" "github_actions_policy" {
   statement {
     sid       = "EcrAuth"
     actions   = ["ecr:GetAuthorizationToken"]
@@ -219,11 +232,187 @@ data "aws_iam_policy_document" "github_actions_boundary" {
       "${aws_s3_bucket.techdocs.arn}/*",
     ]
   }
+
+  # ---- 以下、ephemeral / shared 層の terraform apply / destroy 用（ADR 0010） ----
+
+  # tfstate の読み取りは全層（ephemeral の remote_state が persistent を参照するため）。
+  # 書き込みは ephemeral / shared のみに限定し、CI から persistent 層の state を壊せないようにする。
+  #
+  # 既知の受容リスク: terraform_remote_state は outputs だけでなく state ファイル全体を
+  # 取得するため、persistent state 内の random_password 生成値（backend secret / session 鍵）も
+  # CI ロールから読める。トリガーが workflow_dispatch のみ・実行されるのは main の workflow 定義・
+  # リポジトリ書き込み権限者が本人のみであることから受容する（ADR 0010）。
+  statement {
+    sid = "TfstateRead"
+    actions = [
+      "s3:ListBucket",
+      "s3:GetObject",
+    ]
+    resources = [
+      local.tfstate_bucket_arn,
+      "${local.tfstate_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid = "TfstateWriteEphemeralShared"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+    ]
+    resources = [
+      "${local.tfstate_bucket_arn}/ephemeral/*",
+      "${local.tfstate_bucket_arn}/shared/*",
+    ]
+  }
+
+  # VPC / IPAM（ec2）、ECS、ALB、Aurora、CloudWatch Logs。
+  # これらはリソース単位の制限が実用的でないため、リージョン条件で境界を引く。
+  #
+  # - ec2 をタグ条件で絞らないのは、Describe 系・IPAM 系など多くの API が
+  #   リソースタグ条件を評価できず、apply が壊れやすいため（同一リージョンの
+  #   他プロジェクト VPC に届き得る点は既知の受容リスクとして ADR 0010 に記録）
+  # - logs は ephemeral 層が /ecs/idp-golden-path/* しか扱わないが、
+  #   DescribeLogGroups が "*" を要求するためまとめてリージョン境界で受容する
+  statement {
+    sid = "TerraformRegionalInfra"
+    actions = [
+      "ec2:*",
+      "ecs:*",
+      "elasticloadbalancing:*",
+      "rds:*",
+      "logs:*",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.region]
+    }
+  }
+
+  # ephemeral 層のタスクロール / タスク実行ロールの管理。
+  # 名前を idp-golden-path-* に限定する。managed policy の attach は
+  # ECS タスク実行用の AWS 管理ポリシーのみに絞り、権限昇格経路を塞ぐ。
+  statement {
+    sid = "TaskRoleManagement"
+    actions = [
+      "iam:DeleteRole",
+      "iam:GetRole",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:DeleteRolePolicy",
+      "iam:GetRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListInstanceProfilesForRole",
+    ]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+  }
+
+  # CreateRole / PutRolePolicy は「この boundary を付けたロール」に対してのみ許可する。
+  # これにより CI が任意権限のロール（またはインラインポリシー）を作っても
+  # 実効権限は boundary でキャップされ、権限昇格経路にならない。
+  # ephemeral 層のタスクロール側は permissions_boundary の指定が必須になる。
+  statement {
+    sid = "TaskRoleCreateWithBoundaryOnly"
+    actions = [
+      "iam:CreateRole",
+      "iam:PutRolePolicy",
+    ]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [local.github_actions_boundary_arn]
+    }
+  }
+
+  statement {
+    sid = "TaskRoleAttachEcsExecutionPolicyOnly"
+    actions = [
+      "iam:AttachRolePolicy",
+      "iam:DetachRolePolicy",
+    ]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "iam:PolicyARN"
+      values   = ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"]
+    }
+  }
+
+  statement {
+    sid       = "TaskRolePass"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/idp-golden-path-*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # 初回 apply 時に必要になり得る service-linked role（既存なら no-op）
+  statement {
+    sid       = "ServiceLinkedRoles"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values = [
+        "ecs.amazonaws.com",
+        "elasticloadbalancing.amazonaws.com",
+        "rds.amazonaws.com",
+        "ipam.amazonaws.com",
+      ]
+    }
+  }
+
+  # ephemeral 層の ALB alias レコード操作（対象ゾーン限定）
+  statement {
+    sid = "Route53Records"
+    actions = [
+      "route53:ChangeResourceRecordSets",
+      "route53:ListResourceRecordSets",
+      "route53:GetHostedZone",
+    ]
+    resources = [aws_route53_zone.main.arn]
+  }
+
+  statement {
+    sid       = "Route53GetChange"
+    actions   = ["route53:GetChange"]
+    resources = ["arn:aws:route53:::change/*"]
+  }
+}
+
+# boundary は CI ロールと ephemeral 層のタスクロール群で共用する。
+# CI の inline policy には secretsmanager が無いため、CI ロール自身は秘密値を読めない。
+# タスク実行ロール（inline で GetSecretValue を持つ）の実効権限を成立させるために
+# boundary 側にのみ TaskRuntimeSecrets を持たせる。
+data "aws_iam_policy_document" "github_actions_boundary" {
+  source_policy_documents = [data.aws_iam_policy_document.github_actions_policy.json]
+
+  statement {
+    sid     = "TaskRuntimeSecrets"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:idp-golden-path/*",
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:rds!cluster-*",
+    ]
+  }
 }
 
 resource "aws_iam_policy" "github_actions_boundary" {
   name        = "idp-golden-path-github-actions-boundary"
-  description = "Permissions boundary for idp-golden-path GitHub Actions role"
+  description = "Permissions boundary for idp-golden-path GitHub Actions role and ephemeral task roles"
   policy      = data.aws_iam_policy_document.github_actions_boundary.json
 }
 
@@ -259,7 +448,7 @@ resource "aws_iam_role" "github_actions" {
 resource "aws_iam_role_policy" "github_actions" {
   name   = "idp-golden-path-github-actions"
   role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.github_actions_boundary.json
+  policy = data.aws_iam_policy_document.github_actions_policy.json
 }
 
 # --- AWS Budgets（月 $5） -------------------------------------------------------

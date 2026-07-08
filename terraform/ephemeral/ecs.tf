@@ -25,6 +25,10 @@ data "aws_iam_policy_document" "ecs_tasks_trust" {
 resource "aws_iam_role" "task_execution" {
   name               = "${local.name}-task-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_trust.json
+
+  # CI ロール（GitHub Actions）の iam:CreateRole / iam:PutRolePolicy は
+  # 「この boundary を付けたロール」に対してのみ許可される（persistent 層の設計。ADR 0010）
+  permissions_boundary = data.terraform_remote_state.persistent.outputs.ci_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "task_execution" {
@@ -55,6 +59,9 @@ resource "aws_iam_role_policy" "task_execution_secrets" {
 resource "aws_iam_role" "task" {
   name               = "${local.name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_trust.json
+
+  # task_execution と同様、CI からの作成を成立させるため boundary を強制する
+  permissions_boundary = data.terraform_remote_state.persistent.outputs.ci_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "task_techdocs" {
