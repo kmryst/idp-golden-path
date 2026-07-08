@@ -50,6 +50,9 @@ resource "aws_vpc_ipam" "main" {
   # advanced tier は「アクティブ IP アドレス単位の時間課金」のみで、
   # 検証時のみ apply → destroy する運用（ADR 0009/0010）ではアクティブ IP が
   # 十数個 x 数時間に収まるため、1 サイクルあたり数セント未満。Budgets の $5/月内で許容する。
+  # 課金対象には同リージョンの他プロジェクト（terraform-hannibal / ticket-c2c）の
+  # アクティブ IP も含まれ得るが、両者も destroy 運用のため、全プロジェクト同時稼働でも
+  # 数十 IP x 数時間のオーダーに収まる。
   tier = "advanced"
 }
 
