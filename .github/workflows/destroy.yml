@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   destroy:
-    name: Destroy Production
+    name: Destroy
     runs-on: ubuntu-latest
     if: inputs.confirm == 'destroy'
     steps:
