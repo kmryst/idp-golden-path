@@ -163,11 +163,17 @@ resource "aws_lb" "main" {
 }
 
 resource "aws_lb_target_group" "backstage" {
-  name        = "${local.name}-backstage"
+  # ECS サービスから参照中の置き換えで ResourceInUse にならないよう
+  # name_prefix + create_before_destroy とする
+  name_prefix = "idpgp-"
   port        = 7007
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = aws_vpc.main.id
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   health_check {
     # 新 backend system の実エンドポイント（ADR 0009 参照）
@@ -222,6 +228,12 @@ resource "aws_ecs_service" "backstage" {
 
   # Aurora resume（〜15 秒）+ Backstage 起動を見込む（60 秒以上。ADR 0009）
   health_check_grace_period_seconds = 180
+
+  # タスクが起動失敗を繰り返す場合にデプロイを打ち切る（コスト暴走防止）
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   network_configuration {
     subnets          = aws_subnet.private[*].id
