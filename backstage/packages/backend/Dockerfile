@@ -1,16 +1,17 @@
 # This dockerfile builds an image for the backend package.
-# It should be executed with the root of the repo as docker context.
 #
-# Before building this image, be sure to have run the following commands in the repo root:
+# ビルドコンテキストは「リポジトリルート」（backstage/ ではない）。
+# カタログ実データ（catalog/ / catalog-info.yaml）とゴールデンパステンプレートを
+# イメージに同梱するため、upstream の標準 Dockerfile からコンテキストを一段広げている（ADR 0009）。
+#
+# Before building this image, be sure to have run the following commands in backstage/:
 #
 # yarn install --immutable
 # yarn tsc
 # yarn build:backend
 #
-# Once the commands have been run, you can build the image using `yarn build-image`
-#
-# Alternatively, there is also a multi-stage Dockerfile documented here:
-# https://backstage.io/docs/deployment/docker#multi-stage-build
+# Build (from the repo root):
+#   docker build -t <tag> -f backstage/packages/backend/Dockerfile .
 
 FROM node:24-trixie-slim
 
@@ -41,9 +42,9 @@ USER node
 WORKDIR /app
 
 # Copy files needed by Yarn
-COPY --chown=node:node .yarn ./.yarn
-COPY --chown=node:node .yarnrc.yml ./
-COPY --chown=node:node backstage.json ./
+COPY --chown=node:node backstage/.yarn ./.yarn
+COPY --chown=node:node backstage/.yarnrc.yml ./
+COPY --chown=node:node backstage/backstage.json ./
 
 # This switches many Node.js dependencies to production mode.
 ENV NODE_ENV=production
@@ -54,17 +55,25 @@ ENV NODE_OPTIONS="--no-node-snapshot"
 # Copy repo skeleton first, to avoid unnecessary docker cache invalidation.
 # The skeleton contains the package.json of each package in the monorepo,
 # and along with yarn.lock and the root package.json, that's enough to run yarn install.
-COPY --chown=node:node yarn.lock package.json packages/backend/dist/skeleton.tar.gz ./
+COPY --chown=node:node backstage/yarn.lock backstage/package.json backstage/packages/backend/dist/skeleton.tar.gz ./
 RUN tar xzf skeleton.tar.gz && rm skeleton.tar.gz
 
 RUN --mount=type=cache,target=/home/node/.cache/yarn,sharing=locked,uid=1000,gid=1000 \
     yarn workspaces focus --all --production && rm -rf "$(yarn cache clean)"
 
+# Aurora への TLS 接続検証用の RDS CA バンドル（app-config.production.yaml が参照）
+ADD --chown=node:node https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem ./rds-global-bundle.pem
+
 # This will include the examples, if you don't need these simply remove this line
-COPY --chown=node:node examples ./examples
+COPY --chown=node:node backstage/examples ./examples
+
+# 本番カタログの実データとゴールデンパステンプレート（app-config.production.yaml の locations が参照）
+COPY --chown=node:node catalog ./catalog
+COPY --chown=node:node catalog-info.yaml ./catalog-info.yaml
+COPY --chown=node:node backstage/templates ./templates
 
 # Then copy the rest of the backend bundle, along with any other files we might want.
-COPY --chown=node:node packages/backend/dist/bundle.tar.gz app-config*.yaml ./
+COPY --chown=node:node backstage/packages/backend/dist/bundle.tar.gz backstage/app-config.yaml backstage/app-config.production.yaml ./
 RUN tar xzf bundle.tar.gz && rm bundle.tar.gz
 
 CMD ["node", "packages/backend", "--config", "app-config.yaml", "--config", "app-config.production.yaml"]
