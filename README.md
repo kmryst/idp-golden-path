@@ -6,7 +6,9 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 
 ## Status
 
-運用基盤（GitHub Flow・CI ガードレール・branch protection・ADR 運用）、Software Catalog / TechDocs に続き、核心機能であるゴールデンパステンプレート（Scaffolder）を実装した。現段階はローカル開発のみ（デプロイ先は未確定、[ADR 0003](./docs/adr/0003-backstage-app-layout-and-local-dev-baseline.md) 参照）。
+運用基盤（GitHub Flow・CI ガードレール・branch protection・ADR 運用）、Software Catalog / TechDocs に続き、核心機能であるゴールデンパステンプレート（Scaffolder）を実装した。
+本番デプロイ構成は ECS Fargate + Aurora Serverless v2 + GitHub OAuth（`https://idp-golden-path.click`）で確定済み（[ADR 0009](./docs/adr/0009-production-deployment-on-ecs-fargate.md) 参照）。
+常時稼働はさせず、検証時のみ apply → 動作確認 → destroy するライフサイクルで運用する（persistent 層のみ常設）。
 
 ## ローカル起動
 
@@ -47,6 +49,7 @@ yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 - [ADR 0005](./docs/adr/0005-techdocs-local-generator.md) — TechDocs はローカル builder + ホスト mkdocs（runIn local）で運用する
 - [ADR 0006](./docs/adr/0006-scaffolder-service-baseline-template.md) — Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する
 - [ADR 0007](./docs/adr/0007-scaffolder-github-app-authentication.md) — Scaffolder の GitHub 連携は個人 PAT を継続し、GitHub App へは移行しない
+- [ADR 0009](./docs/adr/0009-production-deployment-on-ecs-fargate.md) — 本番デプロイは ECS Fargate + Aurora Serverless v2 + GitHub OAuth とし、検証時のみ apply する 3 層 state 分離で運用する
 
 ## 開発への参加
 
