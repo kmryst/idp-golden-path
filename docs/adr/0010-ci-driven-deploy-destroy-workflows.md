@@ -15,9 +15,9 @@ Accepted
 
 ### workflow の構成 — 手動起動のみの 2 本立て
 
-- `production-deploy.yml`（Production Deploy）: イメージ build & push → shared 層 apply → ephemeral 層 apply →
+- `deploy.yml`（Deploy）: イメージ build & push → shared 層 apply → ephemeral 層 apply →
   TechDocs publish → HTTPS readiness の smoke check
-- `production-destroy.yml`（Production Destroy）: ephemeral 層 destroy → shared 層 destroy → 残存リソース確認
+- `destroy.yml`（Destroy）: ephemeral 層 destroy → shared 層 destroy → 残存リソース確認
 - トリガーは両方とも **workflow_dispatch のみ**。スケジュール実行・push 連動は誤爆（意図しない課金リソース作成 /
   稼働環境の破棄）防止のため入れない
 - Destroy は確認入力（`destroy` のタイプ）を必須にする
@@ -94,9 +94,9 @@ IDP ポートフォリオとして示したい能力である。
 
 ## 影響
 
-- `.github/workflows/production-deploy.yml` / `production-destroy.yml` を新設する
+- `.github/workflows/deploy.yml` / `destroy.yml` を新設する
 - repo variable `AWS_CICD_ROLE_ARN` に persistent 層の `github_actions_role_arn` output の値を設定する
-- `docs/operations/production-deploy-runbook.md` を CI 駆動の手順に書き換える。ローカル CLI 手順は
+- `docs/operations/deploy-runbook.md` を CI 駆動の手順に書き換える。ローカル CLI 手順は
   bootstrap 時・CI が使えない場合の代替手順として残す
 - ephemeral 層のタスクロール / タスク実行ロールに permissions boundary の指定が必須になる（PR #70 で対応済み）
 - branch protection の required status checks には影響しない（両 workflow とも PR チェックではない）
@@ -104,5 +104,5 @@ IDP ポートフォリオとして示したい能力である。
 ## 関連
 
 - [ADR 0009](./0009-production-deployment-on-ecs-fargate.md) — 本番デプロイ構成と 3 層 state 分離（本 ADR はその実行手段を変更）
-- [runbook](../operations/production-deploy-runbook.md)
+- [runbook](../operations/deploy-runbook.md)
 - Issue [#69](https://github.com/kmryst/idp-golden-path/issues/69) / PR [#70](https://github.com/kmryst/idp-golden-path/pull/70)

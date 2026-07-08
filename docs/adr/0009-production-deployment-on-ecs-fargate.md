@@ -176,7 +176,7 @@ Fargate タスク内で mkdocs を都度実行する構成は、コンテナに 
 - `terraform/persistent/` / `terraform/shared/` / `terraform/ephemeral/` を新設し、それぞれ独立した S3 backend state を持つ
 - Backstage 側は GitHub auth provider の追加、本番 DB 接続（SSL + 長めのタイムアウト）、TechDocs S3 publisher 対応、
   カタログ実データのイメージ同梱（Dockerfile のビルドコンテキストをリポジトリルートに変更）が必要（別 Issue）
-- デプロイ・検証・destroy の手順は `docs/operations/production-deploy-runbook.md` に記録する
+- デプロイ・検証・destroy の手順は `docs/operations/deploy-runbook.md` に記録する
 - ネットワーク CIDR の割り当ては `docs/operations/network-cidr-ledger.md` を台帳とする
 - CLAUDE.md / README.md の「デプロイ先は未確定」の記述を本 ADR 参照に更新する
 - ADR 0005 の「デプロイ時は別 ADR で判断する」は本 ADR で確定した（ローカル開発の基準構成としての ADR 0005 は引き続き有効）

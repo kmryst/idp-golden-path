@@ -1,10 +1,10 @@
-# 本番デプロイ（検証サイクルの破棄側）を 1 クリックで実行する workflow（ADR 0010）。
+# 本番相当構成の環境（検証サイクルの破棄側）を on-demand で 1 クリック破棄する workflow（ADR 0010）。
 #
 # - トリガーは workflow_dispatch のみ。確認入力（"destroy"）を必須にして誤爆を防ぐ
 # - ephemeral 層 → shared 層の順に destroy し、最後に残存リソースを確認する
 # - persistent 層（Route53 / ACM / ECR / TechDocs S3 / OIDC ロール / Budgets）は破棄しない
 
-name: Production Destroy
+name: Destroy
 
 on:
   workflow_dispatch:

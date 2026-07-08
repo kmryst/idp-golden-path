@@ -1,7 +1,7 @@
 # terraform/ — 3 層 state 分離
 
 [ADR 0009](../docs/adr/0009-production-deployment-on-ecs-fargate.md) に基づく本番インフラ。
-デプロイ・destroy の手順は [production-deploy-runbook.md](../docs/operations/production-deploy-runbook.md) を参照。
+デプロイ・destroy の手順は [deploy-runbook.md](../docs/operations/deploy-runbook.md) を参照。
 
 | ディレクトリ | ライフサイクル | 内容 |
 | --- | --- | --- |

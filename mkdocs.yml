@@ -19,7 +19,7 @@ nav:
       - branch protection: operations/branch-protection.md
       - セキュリティスキャン: operations/security-scanning.md
       - Scaffolder GitHub 連携: operations/scaffolder-github-integration.md
-      - 本番デプロイ Runbook: operations/production-deploy-runbook.md
+      - 本番デプロイ Runbook: operations/deploy-runbook.md
       - ネットワーク CIDR 台帳: operations/network-cidr-ledger.md
 plugins:
   - techdocs-core

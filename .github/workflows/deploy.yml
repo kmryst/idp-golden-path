@@ -1,11 +1,11 @@
-# 本番デプロイ（検証サイクルの構築側）を 1 クリックで実行する workflow（ADR 0010）。
+# 本番相当構成の環境を on-demand で 1 クリック構築する workflow（ADR 0010）。
 #
 # - トリガーは workflow_dispatch のみ。スケジュール実行・push 連動は誤爆防止のため入れない
 # - AWS 認証は persistent 層の GitHub OIDC ロール（repo variable: AWS_CICD_ROLE_ARN）
-# - 手順の正本は docs/operations/production-deploy-runbook.md
+# - 手順の正本は docs/operations/deploy-runbook.md
 # - persistent 層はこの workflow では触らない（ローカルからの手動 apply のみ）
 
-name: Production Deploy
+name: Deploy
 
 on:
   workflow_dispatch:
@@ -118,7 +118,7 @@ jobs:
             echo "attempt $i/30: HTTP $code"
             if [ "$code" = "200" ]; then
               {
-                echo "## Production Deploy"
+                echo "## Deploy"
                 echo ""
                 echo "- image tag: \`${{ steps.image.outputs.tag }}\`"
                 echo "- readiness: \`$APP_URL/.backstage/health/v1/readiness\` -> 200"
