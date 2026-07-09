@@ -45,6 +45,12 @@ curl -s -o /dev/null -w '%{http_code}' https://idp-golden-path.click/.backstage/
 （CLAUDE.md / ADR 0009）を優先し、ログイン待ちで本番インフラを稼働させ続けることは
 しない判断とした。
 
+## 次回確認 TODO
+
+次回 AWS 版を deploy したときは、実ユーザーで GitHub OAuth のログイン完了まで確認する。
+具体的には、GitHub 認可後に Backstage へ戻り、User `kmryst` としてサインインできること、
+Catalog と TechDocs が認証後に表示できることを確認し、スクリーンショット等の証跡を残す。
+
 ## 未実施
 
 - Catalog エンティティ一覧の表示確認（ログイン後、実ユーザーによる確認が必要）
