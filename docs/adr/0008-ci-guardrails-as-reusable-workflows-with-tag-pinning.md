@@ -77,6 +77,7 @@ Issue Template Check（Issue 本文の必須見出し `目的` / `対象` / `受
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
+- [CI 品質ゲート トラブルシューティング](../operations/ci-quality-gates-troubleshooting.md)（reusable workflow の concurrency 起因でマージがブロックされた事象と `queue: max` 対応）
 - [ADR 0002. 既存 2 リポジトリの軽運用 / 厳密運用 GitHub Flow モデルを踏襲する](./0002-adopt-lightweight-and-strict-github-flow.md)
 - [ADR 0006. Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する](./0006-scaffolder-service-baseline-template.md)
 - [GitHub Docs: Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
