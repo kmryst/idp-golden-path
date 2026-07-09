@@ -1,8 +1,9 @@
-# ポートフォリオ既存リポジトリのカタログ登録スタブ
+# ポートフォリオ全体を横断する System 定義。
 #
-# 本来は各リポジトリのルートに catalog-info.yaml を置き、url location で取り込むのが本筋。
-# 他リポジトリへの変更はユーザー確認を挟む方針のため、当面このファイルを正とする（ADR-0004 参照）。
-# 各リポジトリへ catalog-info.yaml を追加した時点で、このスタブは url location へ置き換える。
+# terraform-hannibal / ticket-c2c-platform の Component 定義は
+# 各リポジトリ自身が所有する catalog-info.yaml に移行済み。
+# backstage/app-config.yaml / app-config.production.yaml の catalog.locations で
+# GitHub URL location として取り込む（ADR-0011 参照）。
 apiVersion: backstage.io/v1alpha1
 kind: System
 metadata:
@@ -10,50 +11,3 @@ metadata:
   description: DevOps / SRE / Platform Engineering ポートフォリオを構成するリポジトリ群
 spec:
   owner: platform
----
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
-  name: terraform-hannibal
-  description: >-
-    Terraform / AWS / GitHub Actions による ECS Fargate 基盤と
-    Issue → PR → CI の変更管理ガードレールを構築した IaC ポートフォリオ
-  annotations:
-    github.com/project-slug: kmryst/terraform-hannibal
-  links:
-    - url: https://github.com/kmryst/terraform-hannibal
-      title: GitHub Repository
-    - url: https://zenn.dev/kmryst
-      title: Zenn (技術記事)
-  tags:
-    - terraform
-    - aws
-    - ecs
-    - github-actions
-spec:
-  type: infrastructure
-  lifecycle: production
-  owner: platform
-  system: kmryst-portfolio
----
-apiVersion: backstage.io/v1alpha1
-kind: Component
-metadata:
-  name: ticket-c2c-platform
-  description: >-
-    C2C チケット売買プラットフォームのシステム設計・実装。
-    AWS 上の dev / staging 環境構築、k6 負荷検証、Aurora / Valkey / OpenSearch の failover 検証まで実施
-  annotations:
-    github.com/project-slug: kmryst/ticket-c2c-platform
-  links:
-    - url: https://github.com/kmryst/ticket-c2c-platform
-      title: GitHub Repository
-  tags:
-    - aws
-    - nodejs
-    - terraform
-spec:
-  type: service
-  lifecycle: experimental
-  owner: platform
-  system: kmryst-portfolio
