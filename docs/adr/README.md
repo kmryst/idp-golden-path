@@ -42,10 +42,11 @@
 | [0001](./0001-adopt-backstage-for-idp-portfolio.md) | Accepted | IDP ポートフォリオの基盤に Backstage を採用する |
 | [0002](./0002-adopt-lightweight-and-strict-github-flow.md) | Accepted | 既存 2 リポジトリの軽運用 / 厳密運用 GitHub Flow モデルを踏襲する |
 | [0003](./0003-backstage-app-layout-and-local-dev-baseline.md) | Accepted | Backstage アプリを `backstage/` に配置し、ローカル開発は guest 認証 + インメモリ SQLite を基準とする |
-| [0004](./0004-catalog-registration-via-local-stub-locations.md) | Accepted | 既存リポジトリのカタログ登録は当面 `catalog/` 配下の file location スタブで行う |
+| [0004](./0004-catalog-registration-via-local-stub-locations.md) | Superseded by [0011](./0011-catalog-registration-via-repository-owned-catalog-info.md) | 既存リポジトリのカタログ登録は当面 `catalog/` 配下の file location スタブで行う |
 | [0005](./0005-techdocs-local-generator.md) | Accepted | TechDocs はローカル builder + ホスト mkdocs（runIn local）で運用する |
 | [0006](./0006-scaffolder-service-baseline-template.md) | Accepted | Scaffolder ゴールデンパスは「リポジトリ・ガバナンスベースライン」テンプレートとして提供する |
 | [0007](./0007-scaffolder-github-app-authentication.md) | Accepted | Scaffolder の GitHub 連携は個人 PAT を継続し、GitHub App へは移行しない |
 | [0008](./0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) | Accepted | CI ガードレールを reusable workflows として提供し、タグ固定（`@v1`）で参照する |
 | [0009](./0009-production-deployment-on-ecs-fargate.md) | Accepted | 本番デプロイは ECS Fargate + Aurora Serverless v2 + GitHub OAuth とし、検証時のみ apply する 3 層 state 分離で運用する |
 | [0010](./0010-ci-driven-deploy-destroy-workflows.md) | Accepted | 本番デプロイ / 破棄は workflow_dispatch の GitHub Actions で実行する |
+| [0011](./0011-catalog-registration-via-repository-owned-catalog-info.md) | Accepted | 既存リポジトリのカタログ登録を各リポジトリ所有の `catalog-info.yaml` + GitHub URL location へ移行する |

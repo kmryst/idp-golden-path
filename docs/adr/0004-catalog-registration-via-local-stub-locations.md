@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Accepted
+Superseded by [ADR 0011](./0011-catalog-registration-via-repository-owned-catalog-info.md)
 
 ## 日付
 

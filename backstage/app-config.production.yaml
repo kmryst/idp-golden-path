@@ -77,9 +77,15 @@ catalog:
       rules:
         - allow: [User, Group]
 
-    # 既存リポジトリの Component / System 登録スタブ（ADR 0004）
+    # ポートフォリオ全体を横断する System 定義（ADR 0011）
     - type: file
       target: ./catalog/portfolio.yaml
+
+    # 既存リポジトリの Component 定義（各リポジトリ自身が所有する catalog-info.yaml。ADR 0011）
+    - type: url
+      target: https://github.com/kmryst/terraform-hannibal/blob/main/catalog-info.yaml
+    - type: url
+      target: https://github.com/kmryst/ticket-c2c-platform/blob/main/catalog-info.yaml
 
     # このリポジトリ自身（TechDocs 対象）
     - type: file
