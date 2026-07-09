@@ -58,13 +58,14 @@ integrations:
     #   apiBaseUrl: https://ghe.example.net/api/v3
     #   token: ${GHE_TOKEN}
 
-proxy:
-  ### Example for how to add a proxy endpoint for the frontend.
-  ### A typical reason to do this is to handle HTTPS and CORS for internal services.
-  # endpoints:
-  #   '/test':
-  #     target: 'https://example.com'
-  #     changeOrigin: true
+# Example for how to add a proxy endpoint for the frontend.
+# A typical reason to do this is to handle HTTPS and CORS for internal services.
+# proxy:
+#   endpoints:
+#     '/test':
+#       target: 'https://example.com'
+#       changeOrigin: true
+proxy: {}
 
 # Reference documentation http://backstage.io/docs/features/techdocs/configuration
 # Note: After experimenting with basic setup, use CI/CD to generate docs
@@ -97,8 +98,8 @@ auth:
     #   - 'http://localhost:*'
     #   - 'https://*.example.com/*'
 
-scaffolder:
-  # see https://backstage.io/docs/features/software-templates/configuration for software template options
+# see https://backstage.io/docs/features/software-templates/configuration for software template options
+scaffolder: {}
 
 catalog:
   import:
@@ -161,9 +162,6 @@ catalog:
     #   target: https://github.com/backstage/backstage/blob/master/packages/catalog-model/examples/acme-corp.yaml
     #   rules:
     #     - allow: [User, Group]
-
-kubernetes:
-  # see https://backstage.io/docs/features/kubernetes/configuration for kubernetes configuration options
 
 # see https://backstage.io/docs/permissions/getting-started for more on the permission framework
 permission:
