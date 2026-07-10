@@ -53,6 +53,9 @@ jobs:
       - name: Type check (yarn tsc)
         run: yarn tsc
 
+      - name: Validate Backstage config
+        run: yarn config:check
+
       - name: Lint (yarn lint:all)
         run: yarn lint:all
 

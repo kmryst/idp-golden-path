@@ -50,3 +50,4 @@
 | [0009](./0009-production-deployment-on-ecs-fargate.md) | Accepted | 本番デプロイは ECS Fargate + Aurora Serverless v2 + GitHub OAuth とし、検証時のみ apply する 3 層 state 分離で運用する |
 | [0010](./0010-ci-driven-deploy-destroy-workflows.md) | Accepted | 本番デプロイ / 破棄は workflow_dispatch の GitHub Actions で実行する |
 | [0011](./0011-catalog-registration-via-repository-owned-catalog-info.md) | Accepted | 既存リポジトリのカタログ登録を各リポジトリ所有の `catalog-info.yaml` + GitHub URL location へ移行する |
+| [0012](./0012-split-backstage-auth-config-by-environment.md) | Accepted | Backstage の auth provider 設定を環境別 config に分離する |
