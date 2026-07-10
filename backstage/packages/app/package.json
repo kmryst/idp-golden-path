@@ -7,7 +7,7 @@
     "role": "frontend"
   },
   "scripts": {
-    "start": "backstage-cli package start",
+    "start": "node ../../scripts/start-with-config.js package start",
     "build": "backstage-cli package build",
     "clean": "backstage-cli package clean",
     "test": "backstage-cli package test",

@@ -4,8 +4,8 @@ const { basename, join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const {
-  developmentConfigFiles,
-  productionConfigFiles,
+  developmentConfigPaths,
+  productionConfigPaths,
   rdsBundleFile,
 } = require('./config-files');
 
@@ -100,7 +100,7 @@ function writePlaceholderFile(target, description) {
 }
 
 if (mode === 'development') {
-  process.exit(runConfigCheck(developmentConfigFiles));
+  process.exit(runConfigCheck(developmentConfigPaths));
 }
 
 if (mode === 'production') {
@@ -108,7 +108,7 @@ if (mode === 'production') {
   let status = 1;
 
   try {
-    const copiedConfigs = productionConfigFiles.map(config =>
+    const copiedConfigs = productionConfigPaths.map(config =>
       copyConfigFile(config, configDir),
     );
     writePlaceholderFile(join(configDir, rdsBundleFile), rdsBundleFile);

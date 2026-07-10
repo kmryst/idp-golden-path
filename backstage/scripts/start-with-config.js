@@ -1,19 +1,31 @@
 const { existsSync } = require('node:fs');
 const { spawn } = require('node:child_process');
 
-const { developmentConfigFiles, localConfigFile } = require('./config-files');
+const { developmentConfigPaths, localConfigPath } = require('./config-files');
 
-const args = [
-  'repo',
-  'start',
-  ...developmentConfigFiles.flatMap(config => ['--config', config]),
-];
+const inputArgs = process.argv.slice(2);
+const hasExplicitCommand =
+  inputArgs[0] === 'repo' || inputArgs[0] === 'package';
+const commandArgs = hasExplicitCommand
+  ? inputArgs
+  : ['repo', 'start', ...inputArgs];
+const [commandScope, commandName, ...restArgs] = commandArgs;
 
-if (existsSync(localConfigFile)) {
-  args.push('--config', localConfigFile);
+if (commandName !== 'start') {
+  console.error(
+    `start-with-config.js only supports "start" commands (got: ${commandName ?? '<missing>'})`,
+  );
+  process.exit(1);
 }
 
-args.push(...process.argv.slice(2));
+const args = [commandScope, commandName];
+args.push(...developmentConfigPaths.flatMap(config => ['--config', config]));
+
+if (existsSync(localConfigPath)) {
+  args.push('--config', localConfigPath);
+}
+
+args.push(...restArgs);
 
 const child = spawn('backstage-cli', args, {
   stdio: 'inherit',
