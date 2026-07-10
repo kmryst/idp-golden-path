@@ -11,7 +11,7 @@ import {
  * サインインページ。
  *
  * - 本番（app-config.production.yaml で auth.providers.github が定義されている場合）: GitHub OAuth
- * - ローカル開発（guest のみ）: guest で自動サインイン
+ * - ローカル開発（app-config.development.yaml の guest のみ）: guest で自動サインイン
  *
  * 設計判断は ADR 0009 を参照。
  */

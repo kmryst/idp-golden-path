@@ -47,8 +47,6 @@ auth:
   session:
     secret: ${AUTH_SESSION_SECRET}
   providers:
-    # 本番では guest を無効化する（null でベース設定のキーごと削除）
-    guest: null
     github:
       production:
         clientId: ${AUTH_GITHUB_CLIENT_ID}

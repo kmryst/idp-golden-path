@@ -43,7 +43,10 @@ export GITHUB_TOKEN="$(gh auth token)"
 yarn start   # frontend: http://localhost:3000 / backend: http://localhost:7007
 ```
 
-1. `http://localhost:3000/create` を開く（guest 認証、ADR-0003）
+`yarn start` は `app-config.yaml` と `app-config.development.yaml` を読み込む。
+`app-config.local.yaml` が存在する場合は、個人用 override として追加で読み込む（ADR-0012）。
+
+1. `http://localhost:3000/create` を開く（guest 認証、ADR-0003 / ADR-0012）
 2. **Service Baseline (Golden Path)** を選択する
 3. サービス情報（name / description / owner / lifecycle）を入力する
 4. 公開先（Owner = GitHub ユーザー名、Repository = リポジトリ名、可視性）を入力して実行する

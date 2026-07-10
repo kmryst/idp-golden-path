@@ -1,0 +1,7 @@
+# ローカル開発構成（app-config.yaml とマージして読み込む）
+# 本番では読み込まない。production は app-config.production.yaml で GitHub OAuth を使う。
+
+auth:
+  # See https://backstage.io/docs/auth/guest/provider
+  providers:
+    guest: {}
