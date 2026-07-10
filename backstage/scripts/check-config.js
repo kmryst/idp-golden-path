@@ -1,9 +1,30 @@
 const { copyFileSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { basename, join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+const {
+  developmentConfigFiles,
+  productionConfigFiles,
+  rdsBundleFile,
+} = require('./config-files');
+
 const mode = process.argv[2];
+const validModes = new Set(['development', 'production']);
+
+function formatError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function printUsage() {
+  console.error('Usage: node scripts/check-config.js <development|production>');
+}
+
+if (!validModes.has(mode)) {
+  printUsage();
+  process.exit(1);
+}
+
 const defaultEnv = {
   GITHUB_TOKEN: 'dummy-github-token',
   BACKEND_SECRET: 'dummy-backend-secret',
@@ -29,34 +50,82 @@ function runConfigCheck(configs) {
     },
   );
 
+  if (result.error) {
+    console.error(
+      `Failed to run backstage-cli config:check: ${formatError(result.error)}`,
+    );
+    return 1;
+  }
+
+  if (result.signal) {
+    console.error(
+      `backstage-cli config:check was terminated by signal ${result.signal}`,
+    );
+    return 1;
+  }
+
   return result.status ?? 1;
 }
 
+function createTempConfigDir() {
+  try {
+    return mkdtempSync(join(tmpdir(), 'backstage-config-check-'));
+  } catch (error) {
+    console.error(
+      `Failed to create temporary config directory: ${formatError(error)}`,
+    );
+    process.exit(1);
+  }
+}
+
+function copyConfigFile(source, configDir) {
+  const target = join(configDir, basename(source));
+
+  try {
+    copyFileSync(source, target);
+    return target;
+  } catch (error) {
+    console.error(`Failed to copy ${source}: ${formatError(error)}`);
+    throw error;
+  }
+}
+
+function writePlaceholderFile(target, description) {
+  try {
+    writeFileSync(target, '');
+  } catch (error) {
+    console.error(`Failed to create ${description}: ${formatError(error)}`);
+    throw error;
+  }
+}
+
 if (mode === 'development') {
-  process.exit(
-    runConfigCheck(['app-config.yaml', 'app-config.development.yaml']),
-  );
+  process.exit(runConfigCheck(developmentConfigFiles));
 }
 
 if (mode === 'production') {
-  const configDir = mkdtempSync(join(tmpdir(), 'backstage-config-check-'));
+  const configDir = createTempConfigDir();
   let status = 1;
 
   try {
-    const baseConfig = join(configDir, 'app-config.yaml');
-    const productionConfig = join(configDir, 'app-config.production.yaml');
+    const copiedConfigs = productionConfigFiles.map(config =>
+      copyConfigFile(config, configDir),
+    );
+    writePlaceholderFile(join(configDir, rdsBundleFile), rdsBundleFile);
 
-    copyFileSync('app-config.yaml', baseConfig);
-    copyFileSync('app-config.production.yaml', productionConfig);
-    writeFileSync(join(configDir, 'rds-global-bundle.pem'), '');
-
-    status = runConfigCheck([baseConfig, productionConfig]);
+    status = runConfigCheck(copiedConfigs);
+  } catch {
+    status = 1;
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    try {
+      rmSync(configDir, { recursive: true, force: true });
+    } catch (error) {
+      console.error(
+        `Failed to remove temporary config directory ${configDir}: ${formatError(error)}`,
+      );
+      status = 1;
+    }
   }
 
   process.exit(status);
 }
-
-console.error('Usage: node scripts/check-config.js <development|production>');
-process.exit(1);
