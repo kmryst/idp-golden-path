@@ -13,6 +13,16 @@
 したがって、3 リポジトリ全体の見え方としては、`idp-golden-path` が運用ガードレールの雛形・配布元・標準化元になり、`terraform-hannibal` / `ticket-c2c-platform` はその型へ収束させていく方針です。
 これは歴史を「idp-golden-path から最初に作った」と書き換えるものではなく、実証済み運用を IDP の golden path として抽象化した現在の構造を明確にするものです。
 
+## 現時点の技術的な未収束点
+
+2026-07-13 時点では、`idp-golden-path` は reusable workflow と service baseline skeleton の配布元になっていますが、既存 2 リポジトリの技術実装はまだ完全には収束していません。
+
+- `terraform-hannibal` / `ticket-c2c-platform` は、PR Policy Check / Commitlint / Gitleaks / Sync Labels などを `uses: kmryst/idp-golden-path/.github/workflows/<file>.yml@v1` で消費する薄い caller workflow へまだ移行していない。
+- そのため、消費側の required status check 名は service baseline skeleton が想定する `PR Policy Check / PR Policy Check` などの合成名ではなく、既存の単体名を前提としている。
+- Markdown Lint / Issue Template Check など、service baseline skeleton が持つ共通 CI ガードレールは 3 リポジトリで未導入または未整合である。導入や required 化は、運用負荷を見て別 Issue で判断する。
+- helper scripts は共通化途上であり、消費側リポジトリは `scripts/github/lib/common.sh` 形式にまだ揃っていない。
+- deploy / destroy、Terraform apply、backend / frontend build、smoke test などのドメイン固有 workflow は、各リポジトリ固有の責務として残す。
+
 ## 目的
 
 - `Issue -> Branch -> PR -> Merge -> cleanup` を、IDP のゴールデンパスとして自分自身でも実践する
