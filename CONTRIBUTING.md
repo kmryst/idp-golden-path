@@ -8,7 +8,9 @@
 
 運用モデルは [terraform-hannibal](https://github.com/kmryst/terraform-hannibal) /
 [ticket-c2c-platform](https://github.com/kmryst/ticket-c2c-platform) で確立した
-軽運用 / 厳密運用を分ける GitHub Flow を踏襲します（採用理由は `docs/adr/` の ADR を参照）。
+軽運用 / 厳密運用を分ける GitHub Flow を踏襲します。
+設計意図や未採用案、将来の再検討条件は [docs/operations/github-flow-guardrails.md](./docs/operations/github-flow-guardrails.md) を参照してください。
+採用判断の履歴は `docs/adr/` の ADR を参照してください。
 
 ## 開発フロー
 
