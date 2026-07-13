@@ -3,7 +3,8 @@
 `main` ブランチの branch protection 設定の記録です。
 GitHub リポジトリ設定は Terraform 管理していないため、このドキュメントを設定内容の正本として扱い、変更時は必ず同じ PR で更新します。
 
-運用モデル（軽運用 / 厳密運用 GitHub Flow）の採用理由は [ADR 0002](../adr/0002-adopt-lightweight-and-strict-github-flow.md) を参照してください。
+運用モデル（軽運用 / 厳密運用 GitHub Flow）の採用理由は [ADR 0002](../adr/0002-adopt-lightweight-and-strict-github-flow.md)、
+設計意図・未採用案・再検討条件は [GitHub Flow Guardrails](./github-flow-guardrails.md) を参照してください。
 
 ## 現在の設定
 

@@ -8,7 +8,9 @@
 
 運用モデルは [terraform-hannibal](https://github.com/kmryst/terraform-hannibal) /
 [ticket-c2c-platform](https://github.com/kmryst/ticket-c2c-platform) で確立した
-軽運用 / 厳密運用を分ける GitHub Flow を踏襲します（採用理由は `docs/adr/` の ADR を参照）。
+軽運用 / 厳密運用を分ける GitHub Flow を踏襲します。
+設計意図や未採用案、将来の再検討条件は [docs/operations/github-flow-guardrails.md](./docs/operations/github-flow-guardrails.md) を参照してください。
+採用判断の履歴は `docs/adr/` の ADR を参照してください。
 
 ## 開発フロー
 
@@ -155,8 +157,8 @@ PR はテンプレートと helper を使って作成します。
   --base main
 ```
 
-この helper は PR 本文へ `Closes #<issue番号>` を自動追記し、PR を **draft** で作成します。
-PR 内容を確認したら `gh pr ready <PR番号>` で ready にしてください。draft のままではレビュー・マージに進めません。
+この helper は PR 本文へ `Closes #<issue番号>` を自動追記し、PR を通常 PR として作成します。
+draft PR にはしません。
 
 PR タイトルも Conventional Commits 形式にします。
 
@@ -182,13 +184,13 @@ PR 本文には、次のいずれかを必ず含めます。
 
 ### 6. マージ後 cleanup
 
-PR がマージされたら、次の Issue へ進む前にブランチを整理します。
+PR がマージされたら、次の Issue へ進む前に必ず cleanup helper でブランチを整理します。
 
 ```bash
 ./scripts/github/cleanup-merged-pr-branch.sh <PR番号>
 ```
 
-この helper は GitHub 上で PR が `MERGED` であることを確認し、base branch を最新化してから作業ブランチを削除します。
+この helper は GitHub 上で PR が `MERGED` であることを確認し、base branch を最新化してから作業ブランチを整理します。
 
 ## 運用モード
 
