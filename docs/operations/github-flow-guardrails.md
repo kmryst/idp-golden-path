@@ -10,7 +10,7 @@
 時系列では、`idp-golden-path` は `terraform-hannibal` / `ticket-c2c-platform` より後に作られたプロジェクトです。
 ただし役割としては、既存 2 リポジトリで実証した Issue / PR 駆動、AI Agent 運用、CI ガードレール、ADR 運用を抽象化し、golden path として配布・標準化するリポジトリです。
 
-したがって、3 リポジトリ全体の見え方としては、`idp-golden-path` が運用ガードレールの雛形・配布元・標準化元になり、`terraform-hannibal` / `ticket-c2c-platform` はその型に収束している状態を目指します。
+したがって、3 リポジトリ全体の見え方としては、`idp-golden-path` が運用ガードレールの雛形・配布元・標準化元になり、`terraform-hannibal` / `ticket-c2c-platform` はその型へ収束させていく方針です。
 これは歴史を「idp-golden-path から最初に作った」と書き換えるものではなく、実証済み運用を IDP の golden path として抽象化した現在の構造を明確にするものです。
 
 ## 目的
