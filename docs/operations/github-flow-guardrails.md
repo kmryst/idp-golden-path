@@ -21,6 +21,7 @@
 - 消費側の required status check 名は、caller/callee 合成名（`<caller job id> / <callee job name>`、例: `commitlint / Commitlint`）になる。caller job には `name:` を付けず job id にフォールバックさせることで、callee と同名になり文字列がそのまま重複する表示（例: `Commitlint / Commitlint`）を避ける（Issue #106、2026-07-13 追記）。
 - caller workflow の `concurrency.group` は、callee（本リポジトリの reusable workflow）と同一の文字列にしてはならない。同一名にすると GitHub Actions が caller/callee 間のデッドロックと判定し job を1つも起動せず run をキャンセルする。caller 側は `-caller` サフィックスを付けて区別する（Issue #106、ADR-0008 2026-07-13 追記）。
 - Markdown Lint / Issue Template Check など、service baseline skeleton が持つ共通 CI ガードレールは既存 2 リポジトリで未導入または未整合である。導入や required 化は、運用負荷を見て別 Issue で判断する。
+- CodeQL / Dependency Audit も `workflow_call` を追加し reusable workflow 化した（Issue #110）。`dependency-audit.yml` は `package-manager`（npm / yarn）・`working-directory` を input 化し、本リポジトリ自身（Yarn・`backstage/`）以外の npm ベースの消費側でも使えるよう汎用化している。両者は新規導入のガードレールであり、消費側の required status checks には即座に追加しない（段階的 required 化は消費側リポジトリごとに判断する）。
 - helper scripts は共通化途上であり、消費側リポジトリは `scripts/github/lib/common.sh` 形式にまだ揃っていない。
 - deploy / destroy、Terraform apply、backend / frontend build、smoke test などのドメイン固有 workflow は、各リポジトリ固有の責務として残す。
 

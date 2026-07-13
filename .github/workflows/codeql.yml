@@ -2,6 +2,10 @@
 # 目的: Backstage アプリ本体（Node.js / TypeScript）のコード起因の脆弱性を SAST で検出する
 # GitHub 標準の CodeQL workflow テンプレートに準拠（public リポジトリでは無料）
 # 検出結果は Security > Code scanning alerts に集約される（正本: docs/operations/security-scanning.md）
+# このファイルは本リポジトリの PR チェックであると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/codeql.yml@v1` で呼び出す
+# reusable workflow でもある（バージョニング方針は ADR-0008）
+# CodeQL の言語解析（build-mode: none）は package manager に依存しないため、inputs は不要
 
 name: CodeQL
 
@@ -13,11 +17,17 @@ on:
   schedule:
     # 毎週月曜 09:00 JST (00:00 UTC)
     - cron: "0 0 * * 1"
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
+  # 消費側リポジトリの caller workflow は、この group と同一の文字列を使ってはならない。
+  # GitHub Actions は workflow_call 経由でも caller/callee 双方の concurrency group を
+  # 評価するため、同一名にすると「caller と callee 間のデッドロック」と判定され、
+  # job が1つも起動せず run がキャンセルされる（Issue #106）。
+  # caller 側は `codeql-caller-<PR番号>` のように区別すること。
   group: codeql-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
