@@ -5,6 +5,14 @@
 運用ルールの正本は [CONTRIBUTING.md](../../CONTRIBUTING.md) です。この文書では、採用方針の理由、未採用案、将来の再検討条件を補足します。
 採用判断の履歴は [ADR 0002](../adr/0002-adopt-lightweight-and-strict-github-flow.md)、現在の branch protection 設定は [branch-protection.md](./branch-protection.md) を参照します。
 
+## 3 リポジトリ間の位置づけ
+
+時系列では、`idp-golden-path` は `terraform-hannibal` / `ticket-c2c-platform` より後に作られたプロジェクトです。
+ただし役割としては、既存 2 リポジトリで実証した Issue / PR 駆動、AI Agent 運用、CI ガードレール、ADR 運用を抽象化し、golden path として配布・標準化するリポジトリです。
+
+したがって、3 リポジトリ全体の見え方としては、`idp-golden-path` が運用ガードレールの雛形・配布元・標準化元になり、`terraform-hannibal` / `ticket-c2c-platform` はその型に収束している状態を目指します。
+これは歴史を「idp-golden-path から最初に作った」と書き換えるものではなく、実証済み運用を IDP の golden path として抽象化した現在の構造を明確にするものです。
+
 ## 目的
 
 - `Issue -> Branch -> PR -> Merge -> cleanup` を、IDP のゴールデンパスとして自分自身でも実践する
