@@ -100,11 +100,7 @@ PR 作成前プランには、少なくとも次を含めます。
   --base main
 ```
 
-helper は PR を draft で作成します。PR 内容を確認したら、ready にしてレビュー・マージ可能な状態にします。
-
-```bash
-gh pr ready <PR番号>
-```
+helper は PR を通常 PR として作成します。draft PR にはしません。
 
 ## 設計文書の更新と設計判断の記録
 
