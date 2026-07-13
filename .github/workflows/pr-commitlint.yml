@@ -24,6 +24,13 @@ permissions:
   contents: read
 
 concurrency:
+  # 消費側リポジトリの caller workflow は、この group と同一の文字列を使ってはならない。
+  # GitHub Actions は workflow_call 経由でも caller/callee 双方の concurrency group を
+  # 評価するため、同一名にすると「caller と callee 間のデッドロック」と判定され、
+  # job が1つも起動せず run がキャンセルされる
+  # （ticket-c2c-platform PR #299 で実測。ADR-0008 追記・Issue #106参照）。
+  # caller 側は `commitlint-caller-<PR番号>` のように区別すること
+  # （service-baseline skeleton の caller workflow を参照）。
   group: commitlint-${{ github.event.pull_request.number }}
   # 実行中 run のキャンセルは CANCELLED check run を commit に残し、
   # required status checks の判定に混入して PR を恒久的にブロックし得るため cancel しない。
