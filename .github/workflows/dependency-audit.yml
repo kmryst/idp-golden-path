@@ -1,7 +1,15 @@
 # Dependency Audit
-# 目的: backstage/ (Yarn workspaces) の依存関係の既知脆弱性（CVE）を PR / スケジュールで継続的に検出する
+# 目的: 依存関係の既知脆弱性（CVE）を PR / スケジュールで継続的に検出する
 # ポリシー: high 以上で fail、moderate 以下は Step Summary での警告のみ（正本: docs/operations/security-scanning.md）
 # workflow name は status check（job name）と揃える
+# このファイルは本リポジトリの PR チェック（backstage/、Yarn）であると同時に、
+# 他リポジトリから `uses: kmryst/idp-golden-path/.github/workflows/dependency-audit.yml@v1`
+# で呼び出す reusable workflow でもある（バージョニング方針は ADR-0008）
+# 消費側は npm / Yarn いずれかを `package-manager` input で指定する（未指定時は yarn、
+# 本リポジトリ自身の既存挙動を維持）。対象ディレクトリは `working-directory` input で指定する
+# （未指定時は backstage、本リポジトリ自身の既存挙動を維持）
+# npm workspaces 未使用の消費側で root と frontend など複数ディレクトリを監査したい場合は、
+# caller 側で working-directory を変えて複数回呼び出すこと（Issue #110）
 
 name: Dependency Audit
 
@@ -12,11 +20,29 @@ on:
     # 毎週月曜 09:00 JST (00:00 UTC)
     - cron: "0 0 * * 1"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-manager:
+        description: >-
+          依存関係監査に使う package manager（`npm` または `yarn`）。
+          未指定時は `yarn`（本リポジトリの既定値）を使う
+        required: false
+        type: string
+      working-directory:
+        description: >-
+          監査対象ディレクトリ。未指定時は `backstage`（本リポジトリの既定値）を使う
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
+  # 消費側リポジトリの caller workflow は、この group と同一の文字列を使ってはならない。
+  # GitHub Actions は workflow_call 経由でも caller/callee 双方の concurrency group を
+  # 評価するため、同一名にすると「caller と callee 間のデッドロック」と判定され、
+  # job が1つも起動せず run がキャンセルされる（Issue #106）。
+  # caller 側は `dependency-audit-caller-<PR番号>` のように区別すること。
   group: dependency-audit-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
@@ -26,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backstage
+        working-directory: ${{ inputs.working-directory || 'backstage' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -37,12 +63,14 @@ jobs:
           node-version: "24"
 
       - name: Enable Corepack (Yarn 4)
+        if: ${{ (inputs.package-manager || 'yarn') == 'yarn' }}
         run: |
           corepack enable
           yarn --version
 
-      # 全 severity のレポート（fail させない可視化用）
-      - name: Audit report (all severities, warn only)
+      # 全 severity のレポート（fail させない可視化用）— yarn
+      - name: Audit report (all severities, warn only) [yarn]
+        if: ${{ (inputs.package-manager || 'yarn') == 'yarn' }}
         run: |
           {
             echo "## Dependency Audit (all severities)"
@@ -52,6 +80,25 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # high / critical が存在する場合のみ fail させるゲート
-      - name: Audit gate (fail on high or critical)
+      # high / critical が存在する場合のみ fail させるゲート — yarn
+      - name: Audit gate (fail on high or critical) [yarn]
+        if: ${{ (inputs.package-manager || 'yarn') == 'yarn' }}
         run: yarn npm audit --all --recursive --severity high
+
+      # 全 severity のレポート（fail させない可視化用）— npm
+      # npm audit は package-lock.json のみで動作し、事前の npm ci は不要
+      - name: Audit report (all severities, warn only) [npm]
+        if: ${{ inputs.package-manager == 'npm' }}
+        run: |
+          {
+            echo "## Dependency Audit (all severities)"
+            echo ""
+            echo '```'
+            npm audit || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # high / critical が存在する場合のみ fail させるゲート — npm
+      - name: Audit gate (fail on high or critical) [npm]
+        if: ${{ inputs.package-manager == 'npm' }}
+        run: npm audit --audit-level=high

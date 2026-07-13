@@ -105,6 +105,25 @@ ticket-c2c-platform の Commitlint 移行（ticket-c2c-platform#294 / PR #299）
 - Issue: [kmryst/idp-golden-path#106](https://github.com/kmryst/idp-golden-path/issues/106)
 - ticket-c2c-platform#294（Commitlint 移行、デッドロックを実測）、PR #299〜#302
 
+## 追記（2026-07-13）: CodeQL / Dependency Audit を共通ガードレールに追加し、Dependency Audit を npm/Yarn 両対応に汎用化する
+
+ticket-c2c-platform へのセキュリティスキャン導入にあたり、`codeql.yml` / `dependency-audit.yml` を他の 4 種と同様の dual-trigger reusable workflow パターンに揃えた。
+
+- `codeql.yml` に `workflow_call` を追加した。CodeQL の言語解析（`build-mode: none`）は package manager に依存しないため、inputs は不要
+- `dependency-audit.yml` は、従来 `working-directory: backstage` 固定・Yarn 4（Corepack）前提の `yarn npm audit` のみに対応していたが、`package-manager`（`npm` / `yarn`、未指定時 `yarn`）と `working-directory`（未指定時 `backstage`）を `workflow_call` の inputs として追加し、npm ベースの消費側（ticket-c2c-platform 等）でも利用できるよう汎用化した。本リポジトリ自身の呼び出し（`backstage/`、Yarn）は既定値により従来と同じ挙動を維持する
+- npm workspaces を使わない消費側で複数ディレクトリ（例: root と `frontend/`）を監査する場合は、caller 側で `working-directory` を変えて複数回呼び出す設計とする（reusable workflow 側で配列 input はサポートされないため）
+- 両ファイルとも、Issue #106 で確立した規約（caller 側 concurrency group には `-caller` サフィックスを付ける、caller job には `name:` を付けず job id にフォールバックさせる）を新規追加時から適用する
+
+### 消費側への影響
+
+- 両ファイルへの `workflow_call` 追加および `dependency-audit.yml` の入力追加は、本リポジトリ自身の既存トリガー（`push` / `pull_request` / `schedule` / `workflow_dispatch`）や既定挙動を変えないため、非破壊的な変更として `v1.x.y` の patch/minor リリースで扱う
+- 既存の `@v1` 消費側（ticket-c2c-platform、他 4 種のみ導入済み）には影響しない。CodeQL / Dependency Audit は新規導入であり、既存の required status checks には追加しない（段階的 required 化の方針は消費側リポジトリごとに判断する）
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#110](https://github.com/kmryst/idp-golden-path/issues/110)
+- idp-golden-path#106（concurrency deadlock / job 名重複の規約確立）
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
