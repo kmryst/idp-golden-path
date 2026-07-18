@@ -1,0 +1,252 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-labelledby="title desc">
+  <title id="title">Internal Developer Platform and Golden Path overview</title>
+  <desc id="desc">Platform and application engineers use an AWS-hosted Backstage IDP to create a generated GitHub application repository. The generated repository calls reusable workflows from a separate GitHub platform repository.</desc>
+
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10" result="blur"/>
+      <feOffset in="blur" dx="0" dy="8" result="offsetBlur"/>
+      <feFlood flood-color="#0f172a" flood-opacity="0.10" result="shadowColor"/>
+      <feComposite in="shadowColor" in2="offsetBlur" operator="in" result="dropShadow"/>
+      <feMerge><feMergeNode in="dropShadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="blur"/>
+      <feOffset in="blur" dx="0" dy="3" result="offsetBlur"/>
+      <feFlood flood-color="#0f172a" flood-opacity="0.08" result="shadowColor"/>
+      <feComposite in="shadowColor" in2="offsetBlur" operator="in" result="dropShadow"/>
+      <feMerge><feMergeNode in="dropShadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <marker id="arrow-slate" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#2f855a"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#6d4aff"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#2563eb"/>
+    </marker>
+
+    <style>
+      text { font-family: Inter, "Noto Sans", "Segoe UI", Arial, sans-serif; }
+      .title { font-size: 42px; font-weight: 750; fill: #0f172a; letter-spacing: -0.8px; }
+      .subtitle { font-size: 18px; font-weight: 500; fill: #64748b; }
+      .actor-title { font-size: 21px; font-weight: 700; fill: #0f172a; }
+      .actor-subtitle { font-size: 14px; font-weight: 500; fill: #64748b; }
+      .header-title { font-size: 24px; font-weight: 720; fill: #ffffff; }
+      .header-subtitle { font-size: 14px; font-weight: 500; fill: #cbd5e1; }
+      .section-title { font-size: 22px; font-weight: 720; fill: #0f172a; }
+      .section-subtitle { font-size: 14px; font-weight: 500; fill: #64748b; }
+      .chip { font-size: 12px; font-weight: 650; fill: #166534; }
+      .module-title { font-size: 16px; font-weight: 700; fill: #134e4a; }
+      .module-subtitle { font-size: 12px; font-weight: 550; fill: #64748b; }
+      .repo-row-title { font-size: 18px; font-weight: 700; fill: #172554; }
+      .repo-row-subtitle { font-size: 13px; font-weight: 500; fill: #64748b; }
+      .edge-label { font-size: 13px; font-weight: 700; fill: #334155; text-anchor: middle; }
+      .edge-label-green { fill: #276749; }
+      .edge-label-purple { fill: #5b3fd1; }
+      .edge-label-blue { fill: #1d4ed8; }
+    </style>
+  </defs>
+
+  <!-- Canvas -->
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <circle cx="1520" cy="70" r="180" fill="#eff6ff" opacity="0.9"/>
+  <circle cx="80" cy="840" r="210" fill="#ecfdf5" opacity="0.7"/>
+
+  <!-- Title -->
+  <text x="800" y="72" class="title" text-anchor="middle">Internal Developer Platform &amp; Golden Path</text>
+  <text x="800" y="108" class="subtitle" text-anchor="middle">Self-service repository creation with centralized CI guardrails</text>
+
+  <!-- LEFT COLUMN: actors -->
+  <g>
+    <rect x="40" y="165" width="220" height="190" rx="24" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+    <rect x="40" y="520" width="220" height="190" rx="24" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  </g>
+
+  <!-- Platform engineer icon -->
+  <g transform="translate(118 192)" fill="none" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="25" r="20" fill="#f8fafc"/>
+    <path d="M4 84c0-22 12-35 28-35s28 13 28 35"/>
+    <path d="M4 84h56"/>
+    <circle cx="65" cy="64" r="15" fill="#ecfdf5" stroke="#2f855a"/>
+    <path d="M65 55v18M56 64h18" stroke="#2f855a" stroke-width="3"/>
+  </g>
+  <text x="150" y="305" class="actor-title" text-anchor="middle">Platform Engineer</text>
+  <text x="150" y="330" class="actor-subtitle" text-anchor="middle">Builds and evolves the platform</text>
+
+  <!-- Application engineer icon -->
+  <g transform="translate(118 548)" fill="none" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="25" r="20" fill="#f8fafc"/>
+    <path d="M4 84c0-22 12-35 28-35s28 13 28 35"/>
+    <path d="M4 84h56"/>
+    <path d="M55 61l-8 7 8 7M75 61l8 7-8 7" stroke="#2563eb" stroke-width="3"/>
+    <path d="M69 57l-8 22" stroke="#2563eb" stroke-width="3"/>
+  </g>
+  <text x="150" y="660" class="actor-title" text-anchor="middle">Application Engineer</text>
+  <text x="150" y="685" class="actor-subtitle" text-anchor="middle">Creates and owns services</text>
+
+  <!-- MIDDLE TOP: Platform repository -->
+  <g>
+    <rect x="390" y="145" width="500" height="260" rx="24" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+    <path d="M414 145h452a24 24 0 0 1 24 24v48H390v-48a24 24 0 0 1 24-24z" fill="#24292f"/>
+  </g>
+
+  <!-- Repository icon -->
+  <g transform="translate(417 166)" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="0" y="0" width="34" height="34" rx="7"/>
+    <circle cx="10" cy="10" r="3" fill="#ffffff"/>
+    <circle cx="24" cy="24" r="3" fill="#ffffff"/>
+    <path d="M10 13v7c0 3 2 4 5 4h6"/>
+  </g>
+  <text x="468" y="178" class="header-title">GitHub — Platform Repository</text>
+  <text x="468" y="201" class="header-subtitle">kmryst/idp-golden-path</text>
+
+  <!-- Reusable workflow panel -->
+  <rect x="420" y="238" width="440" height="135" rx="18" fill="#f0fdf4" stroke="#4f9d69" stroke-width="2"/>
+  <g transform="translate(444 258)" fill="none" stroke="#2f855a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="8" fill="#dcfce7"/>
+    <circle cx="12" cy="50" r="8" fill="#dcfce7"/>
+    <circle cx="48" cy="31" r="8" fill="#dcfce7"/>
+    <path d="M12 20v22M20 12h10c10 0 10 19 10 19M20 50h10c10 0 10-19 10-19"/>
+  </g>
+  <text x="515" y="270" class="section-title">Reusable Workflows @v1</text>
+  <text x="515" y="294" class="section-subtitle">Centralized GitHub Actions CI guardrails</text>
+
+  <g>
+    <rect x="515" y="313" width="94" height="24" rx="12" fill="#dcfce7"/><text x="562" y="329" class="chip" text-anchor="middle">PR Policy</text>
+    <rect x="617" y="313" width="88" height="24" rx="12" fill="#dcfce7"/><text x="661" y="329" class="chip" text-anchor="middle">Commitlint</text>
+    <rect x="713" y="313" width="112" height="24" rx="12" fill="#dcfce7"/><text x="769" y="329" class="chip" text-anchor="middle">Markdown Lint</text>
+    <rect x="515" y="342" width="78" height="24" rx="12" fill="#dcfce7"/><text x="554" y="358" class="chip" text-anchor="middle">Gitleaks</text>
+    <rect x="601" y="342" width="98" height="24" rx="12" fill="#dcfce7"/><text x="650" y="358" class="chip" text-anchor="middle">Sync Labels</text>
+    <rect x="707" y="342" width="118" height="24" rx="12" fill="#dcfce7"/><text x="766" y="358" class="chip" text-anchor="middle">Issue Check</text>
+  </g>
+
+  <!-- MIDDLE BOTTOM: AWS IDP -->
+  <g>
+    <rect x="390" y="485" width="500" height="300" rx="24" fill="#ffffff" stroke="#f59e0b" stroke-width="2"/>
+    <path d="M414 485h452a24 24 0 0 1 24 24v48H390v-48a24 24 0 0 1 24-24z" fill="#232f3e"/>
+  </g>
+  <path d="M420 535h34c9 0 16-5 20-13 4 8 11 13 20 13h14" fill="none" stroke="#ff9900" stroke-width="4" stroke-linecap="round"/>
+  <text x="430" y="518" class="header-title">AWS — Internal Developer Platform</text>
+  <text x="430" y="543" class="header-subtitle">Deployed-state view</text>
+
+  <!-- Backstage inner panel -->
+  <rect x="420" y="580" width="440" height="165" rx="18" fill="#ecfeff" stroke="#0f9f9a" stroke-width="2"/>
+  <g transform="translate(446 596)" fill="none" stroke="#0f9f9a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 6l14-6 14 6v16l-14 6-14-6z" fill="#ccfbf1"/>
+    <path d="M0 6l14 7 14-7M14 13v15"/>
+  </g>
+  <text x="488" y="618" class="section-title" fill="#0f766e">Backstage</text>
+
+  <!-- Backstage modules -->
+  <g>
+    <rect x="440" y="637" width="120" height="88" rx="14" fill="#ffffff" stroke="#99f6e4"/>
+    <rect x="580" y="637" width="120" height="88" rx="14" fill="#ffffff" stroke="#99f6e4"/>
+    <rect x="720" y="637" width="120" height="88" rx="14" fill="#ffffff" stroke="#99f6e4"/>
+  </g>
+  <g transform="translate(481 648)" fill="none" stroke="#6d4aff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 20h38M6 5v30M32 5v30"/>
+    <circle cx="19" cy="20" r="8" fill="#f5f3ff"/>
+  </g>
+  <text x="500" y="696" class="module-title" text-anchor="middle">Scaffolder</text>
+  <text x="500" y="713" class="module-subtitle" text-anchor="middle">Service Baseline</text>
+
+  <g transform="translate(621 650)" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 4c8-4 14-4 19 0v30c-5-4-11-4-19 0zM38 4c-8-4-14-4-19 0v30c5-4 11-4 19 0z" fill="#eff6ff"/>
+  </g>
+  <text x="640" y="696" class="module-title" text-anchor="middle">Software Catalog</text>
+  <text x="640" y="713" class="module-subtitle" text-anchor="middle">Service ownership</text>
+
+  <g transform="translate(766 648)" fill="none" stroke="#0f9f9a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 0h25l13 13v25H0z" fill="#ecfeff"/>
+    <path d="M25 0v13h13M8 23h22M8 30h16"/>
+  </g>
+  <text x="780" y="696" class="module-title" text-anchor="middle">TechDocs</text>
+  <text x="780" y="713" class="module-subtitle" text-anchor="middle">Docs as code</text>
+
+  <!-- RIGHT: Generated application repository -->
+  <g>
+    <rect x="1100" y="220" width="460" height="500" rx="24" fill="#ffffff" stroke="#60a5fa" stroke-width="2"/>
+    <path d="M1124 220h412a24 24 0 0 1 24 24v66h-460v-66a24 24 0 0 1 24-24z" fill="#24292f"/>
+  </g>
+  <g transform="translate(1126 242)" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="0" y="0" width="38" height="38" rx="8"/>
+    <path d="M10 11h18M10 19h18M10 27h12"/>
+  </g>
+  <text x="1180" y="251" class="header-title">GitHub — Generated</text>
+  <text x="1180" y="279" class="header-title">Application Repository</text>
+  <!-- Generated repository rows -->
+  <g>
+    <rect x="1130" y="338" width="400" height="96" rx="16" fill="#eff6ff" stroke="#93c5fd"/>
+    <rect x="1130" y="455" width="400" height="106" rx="16" fill="#f8fafc" stroke="#cbd5e1"/>
+    <rect x="1130" y="582" width="400" height="106" rx="16" fill="#f8fafc" stroke="#cbd5e1"/>
+  </g>
+
+  <g transform="translate(1152 361)" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="9" cy="9" r="6" fill="#dbeafe"/>
+    <circle cx="9" cy="39" r="6" fill="#dbeafe"/>
+    <circle cx="39" cy="24" r="6" fill="#dbeafe"/>
+    <path d="M9 15v18M15 9h9c8 0 9 15 9 15M15 39h9c8 0 9-15 9-15"/>
+  </g>
+  <text x="1210" y="374" class="repo-row-title">Thin Caller Workflows</text>
+  <text x="1210" y="398" class="repo-row-subtitle">References platform CI with <tspan font-weight="700" fill="#1d4ed8">uses: ...@v1</tspan></text>
+  <text x="1210" y="419" class="repo-row-subtitle">Triggers and repository-specific inputs only</text>
+
+  <g transform="translate(1152 484)" fill="none" stroke="#475569" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 0h34v38H2z" fill="#ffffff"/>
+    <path d="M10 10h18M10 19h18M10 28h12"/>
+    <circle cx="37" cy="35" r="10" fill="#e2e8f0"/>
+    <path d="M33 35l3 3 6-7"/>
+  </g>
+  <text x="1210" y="494" class="repo-row-title">Governance &amp; Developer Experience</text>
+  <text x="1210" y="519" class="repo-row-subtitle">GitHub Flow • Labels • Issue / PR templates</text>
+  <text x="1210" y="541" class="repo-row-subtitle">CONTRIBUTING • CLAUDE • Helper scripts</text>
+
+  <g transform="translate(1152 608)" fill="none" stroke="#0f9f9a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 0h25l13 13v27H0z" fill="#ecfeff"/>
+    <path d="M25 0v13h13M8 23h22M8 31h18"/>
+  </g>
+  <text x="1210" y="620" class="repo-row-title">Catalog &amp; Documentation</text>
+  <text x="1210" y="645" class="repo-row-subtitle">catalog-info.yaml • mkdocs.yml</text>
+  <text x="1210" y="667" class="repo-row-subtitle">ADR • Operations docs • TechDocs source</text>
+
+  <!-- CONNECTIONS: drawn last so they remain legible -->
+
+  <!-- Platform Engineer -> Platform Repository -->
+  <path d="M260 250 H390" fill="none" stroke="#2f855a" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+  <rect x="273" y="208" width="104" height="34" rx="10" fill="#ffffff" stroke="#bbf7d0"/>
+  <text x="325" y="222" class="edge-label edge-label-green"><tspan x="325">Maintains</tspan><tspan x="325" dy="15">shared CI</tspan></text>
+
+  <!-- Platform Engineer -> AWS IDP -->
+  <path d="M260 342 H320 V510 H390" fill="none" stroke="#334155" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-slate)"/>
+  <rect x="271" y="398" width="115" height="48" rx="11" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="328.5" y="415" class="edge-label"><tspan x="328.5">Maintains IDP</tspan><tspan x="328.5" dy="16">&amp; Golden Path</tspan></text>
+
+  <!-- Application Engineer -> AWS IDP -->
+  <path d="M260 615 H390" fill="none" stroke="#6d4aff" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
+  <rect x="272" y="567" width="106" height="39" rx="10" fill="#ffffff" stroke="#ddd6fe"/>
+  <text x="325" y="582" class="edge-label edge-label-purple"><tspan x="325">Enters service</tspan><tspan x="325" dy="15">metadata</tspan></text>
+
+  <!-- Generated repo -> Platform repo: reusable workflow call -->
+  <path d="M1100 354 H890" fill="none" stroke="#2f855a" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-green)"/>
+  <rect x="914" y="302" width="162" height="42" rx="11" fill="#ffffff" stroke="#bbf7d0"/>
+  <text x="995" y="318" class="edge-label edge-label-green"><tspan x="995">Calls reusable</tspan><tspan x="995" dy="16">workflows @v1</tspan></text>
+
+  <!-- AWS IDP -> Generated repo: creation -->
+  <path d="M890 590 H1100" fill="none" stroke="#6d4aff" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-purple)"/>
+  <rect x="909" y="538" width="172" height="42" rx="11" fill="#ffffff" stroke="#ddd6fe"/>
+  <text x="995" y="554" class="edge-label edge-label-purple"><tspan x="995">Creates &amp; publishes</tspan><tspan x="995" dy="16">repository</tspan></text>
+
+  <!-- Generated repo -> AWS IDP: catalog and docs -->
+  <path d="M1100 690 H890" fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-blue)"/>
+  <rect x="911" y="638" width="168" height="42" rx="11" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="995" y="654" class="edge-label edge-label-blue"><tspan x="995">Catalog metadata</tspan><tspan x="995" dy="16">&amp; documentation</tspan></text>
+
+  <!-- Footer -->
+  <text x="800" y="855" font-size="13" font-weight="500" fill="#94a3b8" text-anchor="middle">Runtime and Golden Path flow — deployment lifecycle intentionally omitted</text>
+</svg>
