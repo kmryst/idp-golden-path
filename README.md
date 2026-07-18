@@ -4,6 +4,10 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 
 [terraform-hannibal](https://github.com/kmryst/terraform-hannibal) / [ticket-c2c-platform](https://github.com/kmryst/ticket-c2c-platform) の運用で手作業になっていた ADR・production-readiness チェック・CI ガードレールの再発明を、プラットフォームとして抽象化することを目指す。
 
+## アーキテクチャ概要
+
+![Internal Developer Platform and Golden Path overview](./docs/architecture/diagrams/idp-golden-path-overview.svg)
+
 ## Status
 
 運用基盤（GitHub Flow・CI ガードレール・branch protection・ADR 運用）、Software Catalog / TechDocs に続き、核心機能であるゴールデンパステンプレート（Scaffolder）を実装した。
