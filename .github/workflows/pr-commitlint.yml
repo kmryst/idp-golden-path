@@ -6,6 +6,7 @@
 # `uses: kmryst/idp-golden-path/.github/workflows/pr-commitlint.yml@v1` で呼び出す
 # reusable workflow でもある（バージョニング方針は ADR-0008）
 # 呼び出し側リポジトリの前提: package.json に `commitlint` script と commitlint 設定があること
+# workflow_call の caller は pull_request イベントから呼び出すこと
 
 name: Commitlint
 
@@ -39,12 +40,15 @@ concurrency:
 jobs:
   commitlint:
     name: Commitlint
-    # Dependabot の PR タイトルは可変長で header-max-length に抵触し得る。
-    # フォーマットは Dependabot 側が決定的に生成するため規約強制の対象外とする。
-    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
+      # Dependabot が決定する PR タイトルは header-max-length に抵触し得るため、規約強制の対象外とする。
+      - name: Record Dependabot exemption
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        run: echo "Commitlint is exempt for Dependabot-authored pull requests."
+
       - name: Checkout code
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -52,21 +56,25 @@ jobs:
       # reusable workflow として呼び出し側リポジトリを checkout して動くため、
       # 本リポジトリのローカル composite action には依存せずインライン化している
       - name: Setup Node.js
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version || '24' }}
           cache: 'npm'
 
       - name: Install dependencies
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: npm ci
 
       - name: Lint PR commits
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run commitlint -- --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
 
       - name: Lint PR title
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npm run commitlint -- --verbose

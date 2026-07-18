@@ -7,6 +7,7 @@
 # `uses: kmryst/idp-golden-path/.github/workflows/pr-policy-check.yml@v1` で呼び出す
 # reusable workflow でもある（バージョニング方針は ADR-0008）
 # 厳密運用 path はリポジトリごとに異なるため `strict-paths-regex` input で上書きできる
+# workflow_call の caller は pull_request イベントから呼び出すこと
 
 name: PR Policy Check
 
@@ -46,18 +47,24 @@ concurrency:
 jobs:
   pr-policy-check:
     name: PR Policy Check
-    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
     steps:
+      # Dependabot PR は人間向けの Issue link・必須ラベル規約の対象外とする。
+      - name: Record Dependabot exemption
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        run: echo "PR policy checks are exempt for Dependabot-authored pull requests."
+
       - name: Checkout code
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Require linked issue and mandatory labels
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BODY: ${{ github.event.pull_request.body }}
