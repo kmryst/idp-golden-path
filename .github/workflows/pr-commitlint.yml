@@ -6,6 +6,7 @@
 # `uses: kmryst/idp-golden-path/.github/workflows/pr-commitlint.yml@v1` で呼び出す
 # reusable workflow でもある（バージョニング方針は ADR-0008）
 # 呼び出し側リポジトリの前提: package.json に `commitlint` script と commitlint 設定があること
+# workflow_call の caller は pull_request イベントから呼び出すこと
 
 name: Commitlint
 
@@ -41,6 +42,7 @@ jobs:
     name: Commitlint
     runs-on: ubuntu-latest
     steps:
+      # Dependabot が決定する PR タイトルは header-max-length に抵触し得るため、規約強制の対象外とする。
       - name: Record Dependabot exemption
         if: github.event.pull_request.user.login == 'dependabot[bot]'
         run: echo "Commitlint is exempt for Dependabot-authored pull requests."

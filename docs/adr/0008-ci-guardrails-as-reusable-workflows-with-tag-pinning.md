@@ -140,9 +140,13 @@ Commitlint / PR Policy Check の caller job に Dependabot の除外条件を置
 意図した免除と予期しないスキップを区別しにくい。選択肢 3 は判定を明示できる一方、job と required status check を増やし、
 branch protection の設定変更も必要になる。Commitlint / PR Policy Check はそれぞれ単一の検査 job で完結するため、最小の構成で免除を明示できる選択肢 4 を採用する。
 
+Commitlint は Dependabot が決定する PR タイトルが `header-max-length` に抵触し得るため免除する。PR Policy Check は、人間向けの
+Issue link・必須ラベル規約を Dependabot PR に要求しないため免除する。
+
 ### 採用する実行契約
 
 - caller workflow と called workflow の job は、Dependabot PR でも常に起動する
+- `workflow_call` の caller は `pull_request` イベントから呼び出し、called workflow が `github.event.pull_request` を参照できることを前提とする
 - PR 作成者は `github.event.pull_request.user.login` で判定し、workflow を起動した利用者を示す `github.actor` は使わない
 - PR 作成者が `dependabot[bot]` の場合は検査 step を実行せず、免除理由を記録する step を実行して job を `Success` で終了する
 - 通常 PR では免除 step を実行せず、従来の検査 step をすべて実行する
