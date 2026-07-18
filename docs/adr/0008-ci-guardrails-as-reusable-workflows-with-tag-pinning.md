@@ -124,6 +124,41 @@ ticket-c2c-platform へのセキュリティスキャン導入にあたり、`co
 - Issue: [kmryst/idp-golden-path#110](https://github.com/kmryst/idp-golden-path/issues/110)
 - idp-golden-path#106（concurrency deadlock / job 名重複の規約確立）
 
+## 追記（2026-07-18）: Dependabot の免除を job 内の明示的な成功経路にする
+
+Commitlint / PR Policy Check の caller job に Dependabot の除外条件を置くと、reusable workflow が呼び出されず、
+消費側の branch protection が要求する `<caller job id> / <called job name>` の check が作成されない問題を確認した。
+
+次の選択肢を比較した。
+
+1. caller job 全体をスキップする
+2. called workflow の job 全体をスキップする
+3. 検査 job の後段に別の Gate job を追加する
+4. called workflow の同じ job 内で、通常 PR の検査 step と Dependabot の免除 step を分ける
+
+選択肢 1 は required check が欠落するため不採用とした。選択肢 2 は branch protection を通過できるが、check が `Skipped` と表示され、
+意図した免除と予期しないスキップを区別しにくい。選択肢 3 は判定を明示できる一方、job と required status check を増やし、
+branch protection の設定変更も必要になる。Commitlint / PR Policy Check はそれぞれ単一の検査 job で完結するため、最小の構成で免除を明示できる選択肢 4 を採用する。
+
+### 採用する実行契約
+
+- caller workflow と called workflow の job は、Dependabot PR でも常に起動する
+- PR 作成者は `github.event.pull_request.user.login` で判定し、workflow を起動した利用者を示す `github.actor` は使わない
+- PR 作成者が `dependabot[bot]` の場合は検査 step を実行せず、免除理由を記録する step を実行して job を `Success` で終了する
+- 通常 PR では免除 step を実行せず、従来の検査 step をすべて実行する
+- job name と required status check は変更しない
+
+### 消費側への影響
+
+- job name、permissions、inputs は変わらないため、非破壊的な `v1.x.y` リリースとして扱い、マージ後に `v1` タグを進める
+- service baseline の修正は新規生成リポジトリにだけ反映される。既存利用先の caller workflow は各リポジトリで除外条件を削除する
+- 既存利用先への追随は ticket-c2c-platform#331 / terraform-hannibal#518 で扱う
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#116](https://github.com/kmryst/idp-golden-path/issues/116)
+- ticket-c2c-platform#331 / terraform-hannibal#518
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)

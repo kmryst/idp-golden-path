@@ -46,20 +46,23 @@ concurrency:
 jobs:
   pr-policy-check:
     name: PR Policy Check
-    # Dependabot PR は手動 PR 向けの Issue link・ラベル規約の対象外とする。
-    # caller workflow は常に本 workflow を呼び出し、除外判定は called job で行う。
-    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
     steps:
+      - name: Record Dependabot exemption
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        run: echo "PR policy checks are exempt for Dependabot-authored pull requests."
+
       - name: Checkout code
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Require linked issue and mandatory labels
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BODY: ${{ github.event.pull_request.body }}

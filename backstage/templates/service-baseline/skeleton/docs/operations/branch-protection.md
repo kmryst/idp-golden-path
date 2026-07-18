@@ -76,9 +76,8 @@ gh api repos/${{ values.destination.owner }}/${{ values.destination.repo }}/bran
 ## 変更時の注意
 
 - 存在しない check 名を required に指定すると、PR が永久にマージ不能になる。指定前に PR 上で実際の check run 名を確認する
-- Dependabot PR でも caller workflow は reusable workflow を必ず呼び出す。Dependabot の除外条件は reusable workflow の job だけに置き、
-  `commitlint / Commitlint` と `pr-policy-check / PR Policy Check` を作成した上で job を `Skipped` にする。GitHub Actions では条件により
-  スキップされた job は required status check を妨げない
-- caller job に同じ Dependabot の除外条件を置くと、reusable workflow が呼ばれず、branch protection が要求する caller/callee の check 名が
-  作成されないため、PR がマージ不能になる
+- Dependabot PR でも caller workflow は reusable workflow を必ず呼び出す。called workflow の job も常に起動し、PR 作成者が
+  `dependabot[bot]` の場合は検査 step を実行せず、免除理由を記録する step を実行して `Success` で終了する
+- caller job や called workflow の job 全体に Dependabot の除外条件を置くと、branch protection が要求する check が作成されないか、
+  `Skipped` として表示される。除外条件は called workflow 内の個々の step だけに置く
 - 一時的に保護を外す操作（`gh api -X DELETE .../protection`）は、必ずユーザーの明示的な許可を得てから行う

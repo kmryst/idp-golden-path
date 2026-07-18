@@ -84,9 +84,9 @@ no-op ペア workflow 方式での required 昇格を再検討する。
 ## 変更時の注意
 
 - 存在しない check 名を required に指定すると、PR が永久にマージ不能になる。指定前に PR 上で実際の check run 名を確認する
-- 本リポジトリ自身の Dependabot PR では、`pull_request` で直接起動した `Commitlint` / `PR Policy Check` の job が
-  `if: github.actor != 'dependabot[bot]'` により `Skipped` になる。GitHub Actions では条件によりスキップされた job は required status check を妨げない
-- 他リポジトリから reusable workflow として呼び出す場合も、Dependabot の除外条件は本リポジトリの called workflow の job だけに置く。
-  caller workflow は常に呼び出し、branch protection が要求する caller/callee の check 名を作成させる
+- 本リポジトリ自身の Dependabot PR では、`Commitlint` / `PR Policy Check` の job は常に起動する。PR 作成者が `dependabot[bot]` の場合は
+  検査 step を実行せず、免除理由を記録する step を実行して `Success` で終了する
+- 他リポジトリから reusable workflow として呼び出す場合も、caller workflow と called workflow の job は常に起動する。
+  Dependabot の免除条件は called workflow 内の個々の step だけに置き、branch protection が要求する check を必ず作成する
 - `.github/workflows/` の CI ガードレール 6 本は、他リポジトリから `@v1` 参照される reusable workflows を兼ねる（[ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）。job name や inputs の変更は本リポジトリの required status checks だけでなく消費側リポジトリの check run 名にも影響するため、破壊的変更は major タグ（`v2`）として扱う
 - 一時的に保護を外す操作（`gh api -X DELETE .../protection`）は、必ずユーザーの明示的な許可を得てから行う
