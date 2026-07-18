@@ -46,6 +46,8 @@ concurrency:
 jobs:
   pr-policy-check:
     name: PR Policy Check
+    # Dependabot PR は手動 PR 向けの Issue link・ラベル規約の対象外とする。
+    # caller workflow は常に本 workflow を呼び出し、除外判定は called job で行う。
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
