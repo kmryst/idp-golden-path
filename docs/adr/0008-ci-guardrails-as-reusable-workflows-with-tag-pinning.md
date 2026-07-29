@@ -163,6 +163,41 @@ Issue link・必須ラベル規約を Dependabot PR に要求しないため免�
 - Issue: [kmryst/idp-golden-path#116](https://github.com/kmryst/idp-golden-path/issues/116)
 - ticket-c2c-platform#331 / terraform-hannibal#518
 
+## 追記（2026-07-28）: npm audit の一時例外を期限付き reusable workflow input として提供する
+
+npm ベースの消費側で、修正版が存在しない開発依存の High advisory により全 PR の Dependency Audit が継続的に失敗する事象を確認した。
+full audit を `devDependencies` ごと無効化すると、CI で実行されるツールチェーンの新たな脆弱性も検出できなくなる。
+一方、npm CLI には Yarn 4 の `--ignore` に相当する advisory 単位の除外オプションがない。
+
+### 採用する契約
+
+- npm 消費側向けに、既定値が空配列の optional input `npm-audit-exceptions` を追加する
+- 各例外は、完全一致する GHSA ID、UTC の有効期限、GitHub の追跡 Issue URLを必須とし、有効期間は設定時点から最大 90 日に制限する
+- 例外設定時も full audit を継続し、`via` 連鎖を根本 advisory まで解決して、許可済み GHSA だけに起因する High を一時許可する
+- runtime 依存は、例外適用前に `devDependencies` を除外した別ゲートで監査する
+- Critical、未許可の High、期限切れ、不正設定、audit 実行 / JSON 解析異常は fail closed とする
+- 修正により例外対象が検出されなくなった場合は pass とし、Job Summary で例外削除を促す。これにより Dependabot の修正 PR を古い例外設定だけでブロックしない
+- Yarn 4 は数値 advisory ID を `--ignore` へ渡す既存運用を継続し、GHSA を契約とする npm 用 input の対象外とする
+
+ポリシー評価器は外部 npm package に依存しない Node.js スクリプトとして本リポジトリに置く。
+reusable workflow 内の通常の checkout は caller リポジトリを取得するため、評価器だけは `job.workflow_repository` と
+`job.workflow_sha` を用いて workflow 定義と同じ repository / commit から sparse checkout する。
+これにより、移動タグ `@v1` が解決した workflow と評価ロジックを同じ commit に固定する。
+checkout 前に repository が `kmryst/idp-golden-path` と一致し、SHA が完全な commit SHA であることを検証する。
+context が欠落・変更された場合は checkout の既定値へフォールバックさせず fail closed にする。
+
+### 消費側とリリースへの影響
+
+- input 未指定時は既存 npm / Yarn gate の fail 条件を維持する。npm full audit は caller の `NODE_ENV` / npm config による暗黙の dev 除外を防ぐため、全依存区分を明示的に include し、監査対象を `package-lock.json` に固定する
+- optional input の追加であり、既存消費側へ新しい前提を要求しないため非破壊的な `v1.x.y` リリースとして扱う
+- 消費側は共通 workflow のリリース後にだけ新 input を設定する。未リリースの input を現在の `@v1` へ先行指定しない
+- 例外の期限延長や削除には caller workflow の PR を必要とし、追跡 Issue と週次 audit で恒久化を防ぐ
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#130](https://github.com/kmryst/idp-golden-path/issues/130)
+- 最初の消費予定: ticket-c2c-platform#348
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)

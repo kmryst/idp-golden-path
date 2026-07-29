@@ -5,7 +5,8 @@
   "description": "Internal Developer Platform (IDP) portfolio built on Backstage - repo governance and CI tooling",
   "scripts": {
     "commitlint": "commitlint",
-    "lint:md": "markdownlint-cli2"
+    "lint:md": "markdownlint-cli2",
+    "test:dependency-audit-policy": "node --test scripts/ci/npm-audit-policy.test.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.1",
