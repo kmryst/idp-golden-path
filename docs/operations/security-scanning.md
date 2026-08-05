@@ -47,9 +47,9 @@ moderate 以下を fail させないのは、Backstage 本体の依存グラフ�
    - 推移的依存: `backstage/package.json` の `resolutions` で修正版に固定する
 3. 修正版が無い / 即時対応できない場合（例外運用）:
    - Issue を起票して、除外理由・期限・削除条件を追跡する
-   - 本リポジトリの Yarn audit は `--ignore <numeric advisory ID>` を workflow 側へ理由コメント付きで追記する
-     - Yarn 4 の `--exclude` は advisory ではなくパッケージ名の除外なので使用しない
+   - 本リポジトリ（Yarn）は、後述の `scripts/ci/yarn-audit-exceptions.json` へ期限付き GHSA を登録する
    - npm の reusable workflow 消費側は、後述の `npm-audit-exceptions` input へ期限付き GHSA を設定する
+   - yarn の reusable workflow 消費側は、後述の `yarn-audit-exceptions` input へ期限付き GHSA を設定する
    - 除外は恒久化させず、修正版リリース後に除外を外す PR を作る
 4. schedule 実行での検出（PR 起因でない新規 CVE）も同じフローで、Issue 起票から始める
 
@@ -81,7 +81,31 @@ with:
 
 Yarn 4 の `--ignore` は npm registry の数値 advisory ID を照合するため、GHSA を受け取るこの input の対象外です。
 Yarn と組み合わせて `npm-audit-exceptions` を設定した場合は、設定ミスとして fail します。
-Yarn の一時例外は前節の手順で個別に扱います。
+Yarn の一時例外は次節の `yarn-audit-exceptions` / `scripts/ci/yarn-audit-exceptions.json` で扱います。
+
+### yarn の期限付き例外
+
+yarn パスの期限付き例外は `scripts/ci/yarn-audit-policy.mjs` が評価します。
+例外の宣言方法は実行元によって異なりますが、スキーマと制約は npm 側と同一です
+（完全一致する GHSA ID、UTC の `expires`、GitHub Issue の `tracking` を必須とし、
+有効期間は評価時点から最大 90 日。期限切れ、上限超過、書式不正、重複 ID、未知フィールドは fail）。
+
+| 実行元 | 例外の宣言場所 |
+| --- | --- |
+| 本リポジトリ自身（PR / 週次 / 手動） | `scripts/ci/yarn-audit-exceptions.json`（リポジトリ内ファイル） |
+| yarn の reusable workflow 消費側 | `yarn-audit-exceptions` input（npm 側と同じ JSON 配列形式） |
+
+- 例外が 1 件も無い場合は従来どおり `yarn npm audit --all --recursive --severity high` の素のゲートを実行する（消費側の既定挙動は不変）
+- 例外がある場合は評価器が `yarn npm audit --all --recursive --json` の NDJSON を直接評価し、
+  期限内の完全一致した GHSA に起因する High だけを一時許可する
+- Critical、未許可の High、GHSA ID を持たない advisory、audit 出力の異常は fail closed にする
+- npm 側と異なり、runtime 依存だけを事前監査する別ゲートは持たない。Yarn workspaces のモノレポでは
+  フロントエンド実行時依存も production に分類され、npm 側の「開発依存のみ例外可」という境界として
+  機能しないため、ガードは severity（Critical 例外不可）・期限・追跡 Issue に一本化する
+- 例外登録済み GHSA が検出されなくなった場合は fail させず、Job Summary で削除を促す
+- Job Summary には GHSA、severity、影響パッケージ、期限、追跡 Issue、使用状態を記録する
+- 評価器は `scripts/ci/yarn-audit-policy.test.mjs`（npm 側と同水準のユニットテスト）で担保し、
+  本リポジトリの Dependency Audit 実行時に毎回テストする
 
 ## CodeQL
 
