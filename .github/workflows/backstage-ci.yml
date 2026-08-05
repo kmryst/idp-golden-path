@@ -40,7 +40,7 @@ jobs:
         run: corepack enable
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           # backstage/package.json の engines (node 22 || 24) に合わせる
           node-version: 24
