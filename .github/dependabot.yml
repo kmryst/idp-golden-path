@@ -53,6 +53,19 @@ updates:
           - "react-router-*"
           - "@types/react"
           - "@types/react-dom"
+      # @backstage/* は prod / dev 問わず同じ backstage/yarn.lock を触るため、
+      # 1件ずつ別PRになると1件マージするたびに残り全部が rebase 必要になる
+      # （Issue #149 で実測: 同時に5件の @backstage/* patch 更新PRが競合）。
+      # 1グループにまとめて1PRで更新されるようにする。
+      # dependency-type は指定しない。@backstage/plugin-techdocs-backend 等の
+      # prod dependencies 側の Backstage パッケージも同じグループに入れるため。
+      # react グループと同じ理由で first-match-wins の順序制約があるため、
+      # このグループは react グループより後、npm-dev グループより前に置く。
+      # npm-dev より後ろに置くと、@backstage/cli のような devDependencies 側の
+      # Backstage パッケージが先に npm-dev にマッチして吸われ、グループが再び分裂する。
+      backstage:
+        patterns:
+          - "@backstage/*"
       npm-dev:
         dependency-type: "development"
         patterns:
