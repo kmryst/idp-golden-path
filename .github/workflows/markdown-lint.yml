@@ -43,7 +43,7 @@ jobs:
       # reusable workflow として呼び出し側リポジトリを checkout して動くため、
       # 本リポジトリのローカル composite action には依存せずインライン化している
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version || '24' }}
           cache: 'npm'

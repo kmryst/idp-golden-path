@@ -39,7 +39,7 @@ jobs:
       # yarn cache は使わない: setup-node の yarn キャッシュは Yarn 4(berry) +
       # サブディレクトリ構成での挙動が不安定で、デプロイは検証サイクル毎の
       # 低頻度実行のため cold install を許容する
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
