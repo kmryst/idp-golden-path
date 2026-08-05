@@ -121,6 +121,7 @@ jobs:
           node --test
           scripts/ci/npm-audit-policy.test.mjs
           scripts/ci/yarn-audit-policy.test.mjs
+          scripts/ci/yarn-resolutions-audit.test.mjs
 
       - name: Enable Corepack (Yarn 4)
         if: ${{ (inputs.package-manager || 'yarn') == 'yarn' }}
@@ -240,6 +241,31 @@ jobs:
             script="$GITHUB_WORKSPACE/.idp-golden-path-workflow/scripts/ci/yarn-audit-policy.mjs"
           fi
           node "$script"
+
+      # セキュリティ起因 resolutions の台帳（scripts/ci/yarn-resolutions.json）と
+      # backstage/package.json の同期検証。本リポジトリ固有のチェックであり消費側では実行しない
+      - name: Check yarn resolutions registry (sync)
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            github.repository == 'kmryst/idp-golden-path'
+          }}
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/yarn-resolutions-audit.mjs sync
+
+      # resolutions の棚卸し: 台帳の resolutions を外した一時プロジェクトで再解決し、
+      # advisory が再出現しない resolution（= 不要になったもの）を fail で検出する。
+      # 判定材料（上流のリリース）は週次でしか変わらず、依存グラフ全体の再解決コストを
+      # 毎 PR で払う価値がないため、schedule / 手動実行に限定する（ADR-0008 追記 2026-08-05）
+      - name: Check yarn resolutions inventory (stale)
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            github.repository == 'kmryst/idp-golden-path' &&
+            (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+          }}
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/yarn-resolutions-audit.mjs stale
 
       # 全 severity のレポート（fail させない可視化用）— npm
       # npm audit は package-lock.json のみで動作し、事前の npm ci は不要
