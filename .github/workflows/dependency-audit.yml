@@ -10,6 +10,9 @@
 # （未指定時は backstage、本リポジトリ自身の既存挙動を維持）
 # npm workspaces 未使用の消費側で root と frontend など複数ディレクトリを監査したい場合は、
 # caller 側で working-directory を変えて複数回呼び出すこと（Issue #110）
+# 期限付き例外（GHSA + expires + tracking Issue）は npm 消費側が `npm-audit-exceptions`、
+# yarn 消費側が `yarn-audit-exceptions` input で宣言する。本リポジトリ自身の yarn 例外は
+# scripts/ci/yarn-audit-exceptions.json で宣言する（正本: docs/operations/security-scanning.md、Issue #133）
 
 name: Dependency Audit
 
@@ -38,6 +41,16 @@ on:
           npm full audit で一時許可する期限付き GHSA の JSON 配列。
           各要素は id、expires（UTC の YYYY-MM-DD）、tracking（GitHub Issue URL）を必須とする。
           未指定時は例外なし
+        required: false
+        type: string
+        default: "[]"
+      yarn-audit-exceptions:
+        description: >-
+          yarn audit で一時許可する期限付き GHSA の JSON 配列。
+          各要素は id、expires（UTC の YYYY-MM-DD）、tracking（GitHub Issue URL）を必須とする。
+          未指定時は例外なし。
+          本リポジトリ自身の実行（workflow_call 以外）では、input の代わりに
+          scripts/ci/yarn-audit-exceptions.json を読む
         required: false
         type: string
         default: "[]"
@@ -75,6 +88,7 @@ jobs:
         env:
           PACKAGE_MANAGER: ${{ inputs.package-manager || 'yarn' }}
           NPM_AUDIT_EXCEPTIONS: ${{ inputs['npm-audit-exceptions'] }}
+          YARN_AUDIT_EXCEPTIONS_INPUT: ${{ inputs['yarn-audit-exceptions'] }}
         run: |
           case "$PACKAGE_MANAGER" in
             npm | yarn) ;;
@@ -91,12 +105,23 @@ jobs:
             exit 1
           fi
 
-      # reusable workflow 自身のポリシー評価器を単体テストする。
+          if [[ "$PACKAGE_MANAGER" != "yarn" &&
+                -n "$YARN_AUDIT_EXCEPTIONS_INPUT" &&
+                "$YARN_AUDIT_EXCEPTIONS_INPUT" != "[]" ]]; then
+            echo "::error::yarn-audit-exceptions can only be used with package-manager yarn"
+            exit 1
+          fi
+
+      # reusable workflow 自身のポリシー評価器（npm / yarn）を単体テストする。
       # 消費側から呼ばれた場合は caller リポジトリにこのテストファイルがないため実行しない。
-      - name: Test npm audit policy evaluator
+      - name: Test audit policy evaluators
         if: ${{ github.repository == 'kmryst/idp-golden-path' }}
         working-directory: ${{ github.workspace }}
-        run: node --test scripts/ci/npm-audit-policy.test.mjs
+        run: >-
+          node --test
+          scripts/ci/npm-audit-policy.test.mjs
+          scripts/ci/yarn-audit-policy.test.mjs
+          scripts/ci/yarn-resolutions-audit.test.mjs
 
       - name: Enable Corepack (Yarn 4)
         if: ${{ (inputs.package-manager || 'yarn') == 'yarn' }}
@@ -116,10 +141,131 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # high / critical が存在する場合のみ fail させるゲート — yarn
-      - name: Audit gate (fail on high or critical) [yarn]
+      # yarn の期限付き例外を解決する。優先順位:
+      # 1. workflow_call の yarn-audit-exceptions input（yarn 消費側向け）
+      # 2. 本リポジトリ自身の実行では scripts/ci/yarn-audit-exceptions.json
+      # 3. どちらも無ければ例外なし（従来どおりの素のゲート）
+      - name: Resolve yarn audit exceptions
+        id: yarn-exceptions
         if: ${{ (inputs.package-manager || 'yarn') == 'yarn' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          YARN_AUDIT_EXCEPTIONS_INPUT: ${{ inputs['yarn-audit-exceptions'] }}
+        run: |
+          exceptions="[]"
+          if [[ -n "$YARN_AUDIT_EXCEPTIONS_INPUT" &&
+                "$YARN_AUDIT_EXCEPTIONS_INPUT" != "[]" ]]; then
+            exceptions="$YARN_AUDIT_EXCEPTIONS_INPUT"
+          elif [[ "$GITHUB_REPOSITORY" == "kmryst/idp-golden-path" &&
+                  -f scripts/ci/yarn-audit-exceptions.json ]]; then
+            exceptions="$(jq -c . scripts/ci/yarn-audit-exceptions.json)"
+          fi
+
+          active=false
+          if [[ "$exceptions" != "[]" ]]; then
+            active=true
+          fi
+
+          {
+            echo "active=$active"
+            echo "exceptions<<IDP_GOLDEN_PATH_EOF"
+            echo "$exceptions"
+            echo "IDP_GOLDEN_PATH_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # high / critical が存在する場合のみ fail させるゲート — yarn（例外なしの既定動作）
+      - name: Audit gate (fail on high or critical) [yarn]
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            steps.yarn-exceptions.outputs.active != 'true'
+          }}
         run: yarn npm audit --all --recursive --severity high
+
+      # actions/checkout は reusable workflow の caller を checkout する。
+      # 例外評価器は workflow 定義と同じ repository/SHA から取得し、@v1 の実装と一体で固定する。
+      # 本リポジトリ自身の実行では checkout 済みの scripts/ci/ をそのまま使う。
+      - name: Validate yarn audit policy source
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            steps.yarn-exceptions.outputs.active == 'true' &&
+            github.repository != 'kmryst/idp-golden-path'
+          }}
+        working-directory: ${{ github.workspace }}
+        env:
+          WORKFLOW_REPOSITORY: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          WORKFLOW_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          if [[ "$WORKFLOW_REPOSITORY" != "kmryst/idp-golden-path" ]]; then
+            echo "::error::unexpected reusable workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::reusable workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout yarn audit policy evaluator
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            steps.yarn-exceptions.outputs.active == 'true' &&
+            github.repository != 'kmryst/idp-golden-path'
+          }}
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          path: .idp-golden-path-workflow
+          sparse-checkout: |
+            scripts/ci/npm-audit-policy.mjs
+            scripts/ci/yarn-audit-policy.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # 環境変数名は YARN_ prefix を避ける（Yarn は YARN_* を設定値として解釈し、
+      # 未知の設定名だと yarn npm audit 自体が Usage Error で失敗する）
+      - name: Audit gate with expiring advisory exceptions [yarn]
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            steps.yarn-exceptions.outputs.active == 'true'
+          }}
+        env:
+          IDP_YARN_AUDIT_EXCEPTIONS: ${{ steps.yarn-exceptions.outputs.exceptions }}
+        run: |
+          script="$GITHUB_WORKSPACE/scripts/ci/yarn-audit-policy.mjs"
+          if [[ "$GITHUB_REPOSITORY" != "kmryst/idp-golden-path" ]]; then
+            script="$GITHUB_WORKSPACE/.idp-golden-path-workflow/scripts/ci/yarn-audit-policy.mjs"
+          fi
+          node "$script"
+
+      # セキュリティ起因 resolutions の台帳（scripts/ci/yarn-resolutions.json）と
+      # backstage/package.json の同期検証。本リポジトリ固有のチェックであり消費側では実行しない
+      - name: Check yarn resolutions registry (sync)
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            github.repository == 'kmryst/idp-golden-path'
+          }}
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/yarn-resolutions-audit.mjs sync
+
+      # resolutions の棚卸し: 台帳の resolutions を外した一時プロジェクトで再解決し、
+      # advisory が再出現しない resolution（= 不要になったもの）を fail で検出する。
+      # 判定材料（上流のリリース）は週次でしか変わらず、依存グラフ全体の再解決コストを
+      # 毎 PR で払う価値がないため、schedule / 手動実行に限定する（ADR-0008 追記 2026-08-05）
+      - name: Check yarn resolutions inventory (stale)
+        if: >-
+          ${{
+            (inputs.package-manager || 'yarn') == 'yarn' &&
+            github.repository == 'kmryst/idp-golden-path' &&
+            (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+          }}
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/yarn-resolutions-audit.mjs stale
 
       # 全 severity のレポート（fail させない可視化用）— npm
       # npm audit は package-lock.json のみで動作し、事前の npm ci は不要

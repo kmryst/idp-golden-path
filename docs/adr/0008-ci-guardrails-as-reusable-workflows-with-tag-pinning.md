@@ -198,6 +198,64 @@ context が欠落・変更された場合は checkout の既定値へフォー�
 - Issue: [kmryst/idp-golden-path#130](https://github.com/kmryst/idp-golden-path/issues/130)
 - 最初の消費予定: ticket-c2c-platform#348
 
+## 追記（2026-08-05）: yarn パスにも期限付き例外機構を提供する
+
+本リポジトリ自身（Yarn・`backstage/`）の依存グラフに、修正版が major 跨ぎでしか存在しない
+transitive 依存の High advisory が発生し、Dependency Audit が PR と無関係に fail し続ける事象を確認した。
+常時 fail するゲートは alert fatigue により新規 advisory の検知能力を失わせる。
+npm 側の期限付き例外機構（追記 2026-07-28）は yarn パスに適用されないため、同じ契約を yarn にも提供する。
+
+### 採用する契約
+
+- npm 側の契約（完全一致する GHSA ID・UTC の有効期限・追跡 Issue URL 必須、最大 90 日、
+  Critical / 未許可 High / 期限切れ / 不正設定 / audit 出力異常は fail closed、
+  未検出例外は Job Summary で削除を促す）を踏襲する
+- 評価器は npm / yarn で分離する（`scripts/ci/yarn-audit-policy.mjs`）。npm audit の JSON object と
+  Yarn 4 の NDJSON（1 advisory = 1 行）は構造が異なり、単一評価器へ統合すると双方の fail closed 条件が曖昧になる。
+  例外スキーマの検証（`parseExceptions`）は npm 側実装を共有する
+- npm 側と異なり、runtime 依存だけの事前ゲートは持たない。Yarn workspaces のモノレポでは
+  フロントエンド実行時依存も production に分類され、「開発依存のみ例外可」という npm 側の境界として機能しないため、
+  ガードは severity・期限・追跡 Issue に一本化する
+- 例外の宣言場所は実行元で分ける。yarn 消費側は optional input `yarn-audit-exceptions`（既定値は空配列）、
+  本リポジトリ自身（`workflow_call` 以外のトリガー）は input を渡せないため
+  リポジトリ内ファイル `scripts/ci/yarn-audit-exceptions.json` を読む
+- 消費側での評価器の取得は npm 側と同じく `job.workflow_repository` / `job.workflow_sha` からの
+  sparse checkout とし、`@v1` が解決した workflow と評価ロジックを同じ commit に固定する
+- 評価器へ例外を渡す環境変数は `IDP_YARN_AUDIT_EXCEPTIONS` とし、`YARN_` prefix を避ける
+  （Yarn は `YARN_*` を設定値として解釈し、未知の設定名では `yarn npm audit` 自体が Usage Error で失敗する）
+
+### セキュリティ起因 resolutions の台帳と棚卸し
+
+例外機構と同時に導入するセキュリティ起因の `resolutions` も、放置すれば上流更新の足止めという
+同型の負債になる。ただし管理機構は例外と意図的に変える。期限付き例外は脆弱性が残ったまま受容するため
+解消時期が外から分からず日付（expires）を切るしかないが、resolutions は該当行を外して依存解決し直せば
+「まだ必要か」を実測で機械判定できる。そこで resolutions には expires を付けず、次で管理する。
+
+- 追加基準: resolutions なしの fresh resolve でも修正版が選ばれる場合は lockfile 更新だけで解消し、
+  resolutions は追加しない。追加するのは依存元が脆弱バージョンを exact pin している等、
+  再解決しても修正版が選ばれない場合に限る
+- キーは依存元の宣言 range 単位で絞り、右辺は修正版を下限とする range にする（再現性の固定は lockfile の仕事）
+- 台帳: `package.json` にコメントを書けないため、理由・対応 GHSA・経路をサイドカー
+  `scripts/ci/yarn-resolutions.json` に記録し、`package.json` との同期を毎回 CI で検証する（sync）
+- 棚卸し: 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決して audit を実行し、
+  台帳記載の advisory が再出現しない resolution（= 不要）を fail で検出する（stale）。
+  期限切れ例外と違い「消すだけ」で対応コストが低く放置する理由がないため、warn ではなく fail とする
+- 棚卸しの実行は週次 schedule と手動に限定する。判定材料（上流のリリース）は週次でしか変わらず、
+  依存グラフ全体の再解決コストを毎 PR で払う価値がないため
+- 台帳と棚卸しは本リポジトリ固有のチェックとして `github.repository` で限定し、
+  reusable workflow の消費側では実行しない
+
+### 消費側とリリースへの影響
+
+- 例外未設定時は従来どおり `yarn npm audit --all --recursive --severity high` の素のゲートを実行し、
+  既存 yarn 消費側の fail 条件・job name を維持する
+- optional input の追加であり、非破壊的な `v1.x.y` リリースとして扱う
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#133](https://github.com/kmryst/idp-golden-path/issues/133)
+- 例外の追跡: [kmryst/idp-golden-path#134](https://github.com/kmryst/idp-golden-path/issues/134)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)

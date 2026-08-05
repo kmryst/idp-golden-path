@@ -53,7 +53,7 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function canonicalGhsaFromAdvisoryUrl(value) {
+export function canonicalGhsaFromAdvisoryUrl(value) {
   if (typeof value !== "string") {
     return null;
   }
@@ -87,17 +87,21 @@ function validateDate(value, fieldName) {
   }
 }
 
-export function parseExceptions(raw, now = new Date()) {
+export function parseExceptions(
+  raw,
+  now = new Date(),
+  inputName = "npm-audit-exceptions",
+) {
   let parsed;
 
   try {
     parsed = JSON.parse(raw === undefined || raw.trim() === "" ? "[]" : raw);
   } catch (error) {
-    throw new AuditPolicyError(`npm-audit-exceptions must be valid JSON: ${error.message}`);
+    throw new AuditPolicyError(`${inputName} must be valid JSON: ${error.message}`);
   }
 
   if (!Array.isArray(parsed)) {
-    throw new AuditPolicyError("npm-audit-exceptions must be a JSON array");
+    throw new AuditPolicyError(`${inputName} must be a JSON array`);
   }
 
   const today = currentUtcDate(now);
@@ -107,7 +111,7 @@ export function parseExceptions(raw, now = new Date()) {
   const seenIds = new Set();
 
   return parsed.map((entry, index) => {
-    const label = `npm-audit-exceptions[${index}]`;
+    const label = `${inputName}[${index}]`;
     if (!isRecord(entry)) {
       throw new AuditPolicyError(`${label} must be an object`);
     }
@@ -471,7 +475,7 @@ function runNpmAudit(args) {
   return { report, status: result.status };
 }
 
-function escapeMarkdown(value) {
+export function escapeMarkdown(value) {
   return String(value)
     .replaceAll("\\", "\\\\")
     .replaceAll("|", "\\|")
