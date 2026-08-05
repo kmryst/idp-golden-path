@@ -63,6 +63,7 @@ updates:
       # 実測: jsdom のみ 29.1.1 に戻すと yarn test / yarn tsc とも pass（他5件は更新したまま）。
       # 本番影響なし: jsdom は devDependency でテスト環境専用。
       # 解除条件: @backstage/core-components の依存が @material-ui/core → @mui/material に変わったら。
-      # 追跡: Issue #138
+      # 見直し期限: 2026-11-02（Issue #134 の audit 例外と棚卸し時期を揃える）
+      # 追跡: Issue #146
       - dependency-name: "jsdom"
         update-types: ["version-update:semver-major"]
