@@ -11,3 +11,16 @@
 - 「ECR が未署名イメージを拒否する」という表現は正確ではない。ECR 自体にイメージ署名を強制検証する機能はなく、実際にはデプロイ前の CI ゲートで署名を検証し、未署名イメージのデプロイをブロックする設計になる。idp-golden-path / terraform-hannibal / ticket-c2c-platform はいずれも ECS Fargate 上で稼働しており（[ADR 0009](./adr/0009-production-deployment-on-ecs-fargate.md)）Kubernetes の Admission Controller に相当するクラスタ側検証の仕組みはないため、CI パイプライン内の検証で完結させる。
 - 証明できること: 「検出型セキュリティ」（脆弱性スキャンで後から気づく）から「予防・証明型セキュリティ」（ビルドの出所と完全性を事前に証明する）への転換を示せる。
 - DevSecOps 寄りの拡張であり、単体では規模が小さい。独立した「第4の柱」として立てるより、既存 3 リポジトリの CI ガードレールへの横串強化として位置づける方が実装規模に見合う。
+
+## 案4: resolutions/overrides 台帳・棚卸し機構の reusable workflow 汎用化
+
+現状、Yarn 側の resolutions 台帳・棚卸し（sync / stale、[ADR 0008](./adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) 追記 2026-08-05）は
+idp-golden-path 自身（`github.repository` 固定）でのみ動作し、reusable workflow の
+消費側（ticket-c2c-platform 等）には配布されていない。
+
+- ticket-c2c-platform は現在 npm `overrides` を1件（`find-my-way`）のみ持ち、
+  Issue ベースの手動追跡（撤去条件・再確認期限）で足りている
+- 消費側で overrides / resolutions が複数件（目安2〜3件超）に積み上がり、
+  目視管理が困難になった場合に、この機構を汎用化（`github.repository` 固定でなく、
+  消費側リポジトリの台帳ファイルの有無で判定する形）する価値が
+  実装・保守コストを上回る
