@@ -57,3 +57,12 @@ updates:
         dependency-type: "development"
         patterns:
           - "*"
+    ignore:
+      # jsdom 30 は CSS.escape の IDL brand check 厳格化により、
+      # MUI v4 (@material-ui/styles + JSS) 経由で App.test.tsx が TypeError で落ちる（PR #132 で検出）。
+      # 実測: jsdom のみ 29.1.1 に戻すと yarn test / yarn tsc とも pass（他5件は更新したまま）。
+      # 本番影響なし: jsdom は devDependency でテスト環境専用。
+      # 解除条件: @backstage/core-components の依存が @material-ui/core → @mui/material に変わったら。
+      # 追跡: Issue #138
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
