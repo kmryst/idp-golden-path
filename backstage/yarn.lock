@@ -3911,15 +3911,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@backstage/plugin-permission-backend-module-allow-all-policy@npm:^0.2.20":
-  version: 0.2.20
-  resolution: "@backstage/plugin-permission-backend-module-allow-all-policy@npm:0.2.20"
+"@backstage/plugin-permission-backend-module-allow-all-policy@npm:^0.2.21":
+  version: 0.2.21
+  resolution: "@backstage/plugin-permission-backend-module-allow-all-policy@npm:0.2.21"
   dependencies:
-    "@backstage/backend-plugin-api": "npm:^1.9.2"
-    "@backstage/plugin-auth-node": "npm:^0.7.2"
+    "@backstage/backend-plugin-api": "npm:^1.9.3"
+    "@backstage/plugin-auth-node": "npm:^0.7.3"
     "@backstage/plugin-permission-common": "npm:^0.9.9"
-    "@backstage/plugin-permission-node": "npm:^0.11.1"
-  checksum: 10c0/3bb3001d2e0610535e87516f3a9dd4d0f8ac9db9972133003cc9cc022e8ede9f418d374f25905db684d118d2cd65acb96e343c90eb6c395907b985746fc36875
+    "@backstage/plugin-permission-node": "npm:^0.11.2"
+  checksum: 10c0/47fcd18aa09d93465fe423f9abecd905f8264e7a1b791afbdcc59bf14239e0c1ec97c7c0c3247563962fa9334a87c8adaa30227bf5cfb2668847597d9bc3cb9b
   languageName: node
   linkType: hard
 
@@ -13791,7 +13791,7 @@ __metadata:
     "@backstage/plugin-mcp-actions-backend": "npm:^0.1.14"
     "@backstage/plugin-notifications-backend": "npm:^0.6.6"
     "@backstage/plugin-permission-backend": "npm:^0.7.13"
-    "@backstage/plugin-permission-backend-module-allow-all-policy": "npm:^0.2.20"
+    "@backstage/plugin-permission-backend-module-allow-all-policy": "npm:^0.2.21"
     "@backstage/plugin-permission-common": "npm:^0.9.9"
     "@backstage/plugin-permission-node": "npm:^0.11.1"
     "@backstage/plugin-proxy-backend": "npm:^0.6.14"
