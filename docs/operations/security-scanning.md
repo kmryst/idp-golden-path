@@ -44,7 +44,10 @@ moderate 以下を fail させないのは、Backstage 本体の依存グラフ�
 1. Step Summary で該当 advisory（パッケージ名・severity・修正版の有無）を確認する
 2. 修正版がある場合: 依存の更新で解消する
    - 直接依存: `backstage/package.json` のバージョン更新（Dependabot PR があればそれを優先）
-   - 推移的依存: `backstage/package.json` の `resolutions` で修正版に固定する
+   - 推移的依存で、宣言 range 内に修正版がある場合: `yarn install` による lockfile の更新だけで解消する。
+     `resolutions` は追加しない（fresh resolve で修正版が選ばれるなら固定は不要であり、上流更新の足止めになる）
+   - 推移的依存で、依存元が脆弱バージョンを exact pin している等、再解決しても修正版が選ばれない場合に限り:
+     `backstage/package.json` の `resolutions` を追加する（後述の運用ルールに従う）
 3. 修正版が無い / 即時対応できない場合（例外運用）:
    - Issue を起票して、除外理由・期限・削除条件を追跡する
    - 本リポジトリ（Yarn）は、後述の `scripts/ci/yarn-audit-exceptions.json` へ期限付き GHSA を登録する
@@ -106,6 +109,47 @@ yarn パスの期限付き例外は `scripts/ci/yarn-audit-policy.mjs` が評価
 - Job Summary には GHSA、severity、影響パッケージ、期限、追跡 Issue、使用状態を記録する
 - 評価器は `scripts/ci/yarn-audit-policy.test.mjs`（npm 側と同水準のユニットテスト）で担保し、
   本リポジトリの Dependency Audit 実行時に毎回テストする
+
+### セキュリティ起因の yarn resolutions の運用
+
+期限付き例外が「脆弱性が残ったまま期限付きで受容する」機構であるのに対し、`resolutions` は
+「修正版を強制して脆弱性を消す」機構です。ただし resolutions も放置すれば上流更新の足止めという
+負債になるため、例外と同水準の台帳・棚卸しで管理します。期限（expires）は持たせません。
+resolutions は「その行を外して依存解決し直せば、まだ必要かどうかを実測で判定できる」ため、
+任意の日付より正確な削除条件を機械判定できるからです。
+
+**追加基準**（すべて満たす場合のみ追加する）:
+
+1. 対象 advisory の修正版が、依存元の宣言 range と同一 major 内に存在する
+2. resolutions なしで再解決しても修正版が選ばれない（依存元が脆弱バージョンを exact pin している等）。
+   宣言 range 内で fresh resolve が修正版を選ぶ場合は、lockfile の更新（`yarn install`）だけで解消し
+   resolutions を追加しない
+3. 適用後に `yarn install` / `yarn test` / `yarn tsc` / `yarn build:all` の成功を実測確認する。
+   通らない場合は resolutions を諦め、期限付き例外に回す
+
+**書き方**:
+
+- キーは依存元が宣言している range 単位（例: `undici@npm:7.28.0`）で指定し、bare なパッケージ名
+  （全 range に適用）は major 混在時の巻き込みを避けるため使わない
+- 右辺は修正版を下限とする range（例: `^7.29.0`）にする。再現性の固定は lockfile の仕事であり、
+  右辺を完全固定すると同系統の次の修正版を拾えない
+
+**台帳（サイドカー）**: `package.json` にはコメントを書けないため、セキュリティ起因の resolutions は
+`scripts/ci/yarn-resolutions.json` に理由・対応 GHSA・経路（dependents）を必ず登録する。
+`scripts/ci/yarn-resolutions-audit.mjs` が次の 2 つを検証する
+（ユニットテストは `scripts/ci/yarn-resolutions-audit.test.mjs`）。
+
+| チェック | 実行タイミング | 内容 |
+| --- | --- | --- |
+| sync | 毎回（PR / 週次 / 手動） | 台帳のスキーマ検証と、`backstage/package.json` の resolutions との同期（欠落・右辺不一致で fail） |
+| stale（棚卸し） | 週次 schedule / 手動 | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する |
+
+**削除条件**: stale チェックで advisory が再出現しなかった resolution は不要になっているため **fail** する
+（期限切れ例外と違い「該当行と台帳エントリを消すだけ」で対応コストが低く、放置する理由がないため
+warn ではなく fail とする）。検出されたら resolutions の該当行と台帳エントリを削除する PR を作る。
+棚卸しを毎 PR ではなく週次にするのは、判定材料（上流のリリース）が週次でしか変わらず、
+依存グラフ全体の再解決コストを毎 PR で払う価値がないため。台帳未記載の High / Critical が
+管理対象パッケージに再出現した場合は警告に留める（実グラフの週次 audit ゲートが本監視を担う）。
 
 ## CodeQL
 

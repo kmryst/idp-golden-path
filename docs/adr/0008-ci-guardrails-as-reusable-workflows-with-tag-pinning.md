@@ -224,6 +224,27 @@ npm 側の期限付き例外機構（追記 2026-07-28）は yarn パスに適�
 - 評価器へ例外を渡す環境変数は `IDP_YARN_AUDIT_EXCEPTIONS` とし、`YARN_` prefix を避ける
   （Yarn は `YARN_*` を設定値として解釈し、未知の設定名では `yarn npm audit` 自体が Usage Error で失敗する）
 
+### セキュリティ起因 resolutions の台帳と棚卸し
+
+例外機構と同時に導入するセキュリティ起因の `resolutions` も、放置すれば上流更新の足止めという
+同型の負債になる。ただし管理機構は例外と意図的に変える。期限付き例外は脆弱性が残ったまま受容するため
+解消時期が外から分からず日付（expires）を切るしかないが、resolutions は該当行を外して依存解決し直せば
+「まだ必要か」を実測で機械判定できる。そこで resolutions には expires を付けず、次で管理する。
+
+- 追加基準: resolutions なしの fresh resolve でも修正版が選ばれる場合は lockfile 更新だけで解消し、
+  resolutions は追加しない。追加するのは依存元が脆弱バージョンを exact pin している等、
+  再解決しても修正版が選ばれない場合に限る
+- キーは依存元の宣言 range 単位で絞り、右辺は修正版を下限とする range にする（再現性の固定は lockfile の仕事）
+- 台帳: `package.json` にコメントを書けないため、理由・対応 GHSA・経路をサイドカー
+  `scripts/ci/yarn-resolutions.json` に記録し、`package.json` との同期を毎回 CI で検証する（sync）
+- 棚卸し: 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決して audit を実行し、
+  台帳記載の advisory が再出現しない resolution（= 不要）を fail で検出する（stale）。
+  期限切れ例外と違い「消すだけ」で対応コストが低く放置する理由がないため、warn ではなく fail とする
+- 棚卸しの実行は週次 schedule と手動に限定する。判定材料（上流のリリース）は週次でしか変わらず、
+  依存グラフ全体の再解決コストを毎 PR で払う価値がないため
+- 台帳と棚卸しは本リポジトリ固有のチェックとして `github.repository` で限定し、
+  reusable workflow の消費側では実行しない
+
 ### 消費側とリリースへの影響
 
 - 例外未設定時は従来どおり `yarn npm audit --all --recursive --severity high` の素のゲートを実行し、
