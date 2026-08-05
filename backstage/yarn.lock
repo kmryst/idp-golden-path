@@ -13159,7 +13159,7 @@ __metadata:
     "@backstage/core-components": "npm:^0.18.11"
     "@backstage/core-plugin-api": "npm:^1.12.7"
     "@backstage/frontend-defaults": "npm:^0.5.3"
-    "@backstage/frontend-plugin-api": "npm:^0.17.2"
+    "@backstage/frontend-plugin-api": "npm:^0.17.3"
     "@backstage/frontend-test-utils": "npm:^0.6.2"
     "@backstage/integration-react": "npm:^1.2.19"
     "@backstage/plugin-api-docs": "npm:^0.14.2"
