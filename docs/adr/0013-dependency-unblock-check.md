@@ -185,6 +185,7 @@ artifact の受け渡しでジョブ構造が複雑になる割に得られる�
 - [ADR-0008](./0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) — reusable workflow の dual-trigger 提供とタグ固定
 - [docs/operations/dependency-unblock-check.md](../operations/dependency-unblock-check.md) — 運用正本
 - [docs/operations/security-scanning.md](../operations/security-scanning.md) — 脆弱性スキャンの正本（用途が別。混ぜない）
+- [検証記録 2026-08-09](../operations/verification/2026-08-09-dependency-unblock-check/README.md) — UNBLOCKED 経路（exit 10）・連投防止・通知到達の実地検証
 - Issue #160 — 本 workflow の新設
 - Issue #146 — jsdom major 更新 ignore の追跡 Issue（本リポジトリ唯一の台帳エントリ）
 - Issue #106 — caller / callee の concurrency group デッドロック契約
