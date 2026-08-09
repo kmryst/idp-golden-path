@@ -6,9 +6,11 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const GHSA_PATTERN = /^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/;
-const TRACKING_ISSUE_PATTERN =
+// 他の CI 評価器（dependabot-unblock-check.mjs）が同一の検証規則を使うため export する。
+// 「同値の正規表現をコピーする」のではなく import させることで、両者の乖離を防ぐ
+export const TRACKING_ISSUE_PATTERN =
   /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9._-]{1,100}\/issues\/[1-9][0-9]*$/;
-const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+export const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const MAX_EXCEPTION_TTL_DAYS = 90;
 const THRESHOLD_SEVERITIES = new Set(["high", "critical"]);
 const SEVERITY_RANK = new Map([

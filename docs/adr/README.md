@@ -52,3 +52,4 @@ ADR はその正本を置き換えるものではなく、重要な設計判断�
 | [0010](./0010-ci-driven-deploy-destroy-workflows.md) | Accepted | 本番デプロイ / 破棄は workflow_dispatch の GitHub Actions で実行する |
 | [0011](./0011-catalog-registration-via-repository-owned-catalog-info.md) | Accepted | 既存リポジトリのカタログ登録を各リポジトリ所有の `catalog-info.yaml` + GitHub URL location へ移行する |
 | [0012](./0012-split-backstage-auth-config-by-environment.md) | Accepted | Backstage の auth provider 設定を環境別 config に分離する |
+| [0013](./0013-dependency-unblock-check.md) | Accepted | Dependabot ignore の解除条件を週次で実測検証し、朗報を「赤」で通知する |

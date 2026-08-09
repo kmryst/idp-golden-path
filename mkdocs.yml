@@ -21,5 +21,6 @@ nav:
       - Scaffolder GitHub 連携: operations/scaffolder-github-integration.md
       - 本番デプロイ Runbook: operations/deploy-runbook.md
       - ネットワーク CIDR 台帳: operations/network-cidr-ledger.md
+      - Dependency Unblock Check: operations/dependency-unblock-check.md
 plugins:
   - techdocs-core

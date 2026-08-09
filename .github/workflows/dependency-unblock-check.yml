@@ -1,0 +1,203 @@
+# Dependency Unblock Check
+# 目的: Dependabot の ignore が「もう外せる」状態になっていないかを週次で実測し、
+#       ignore / 台帳 / 追跡 Issue の三者の食い違いを検出する
+#       （正本: docs/operations/dependency-unblock-check.md、設計判断: ADR-0013）
+#
+# 赤緑の定義（既存ワークフローと意味が違うので注意）
+#   緑 exit 0  = 無操作でよい。全 probe が想定どおり失敗し、機構検査も全パスした状態
+#   赤         = 人間の出番。赤には 2 種類あり Job Summary の先頭行で見分ける
+#     exit 10  UNBLOCKED: 上流が対応した（朗報）。ignore を外せる。追跡 Issue に記録済み
+#     exit 1   MECHANISM: 機構の故障。ignore / 台帳 / 追跡 Issue のどれかが食い違っている
+#   朗報を赤にしているのは、新インフラを足さずに人へ届く唯一の確実な経路が
+#   GitHub Actions の失敗通知だから（ADR-0013）
+#
+# 【セキュリティ契約】pull_request / pull_request_target トリガーを張ってはならない。
+# 台帳（scripts/ci/dependabot-unblock.json）は任意のシェルコマンドを `steps` として運び、
+# このジョブは `issues: write` を持つ。fork PR から本 workflow に到達する経路を作らないこと。
+# 実行契機は schedule / workflow_dispatch / workflow_call の 3 種に限る。
+# 消費側 caller も同じ 3 種に限定すること（usage contract）。
+# 将来 PR 時の検証を導入する場合の条件は ADR-0013 に明記してある
+# （sync サブコマンドのみ・permissions は contents: read のみ・台帳 steps を spawn しない）。
+#
+# このファイルは本リポジトリ自身の週次ジョブであると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/dependency-unblock-check.yml@v1`
+# で呼び出す reusable workflow でもある（バージョニング方針は ADR-0008）
+#
+# 【concurrency 契約】消費側 caller は、この group と同一の文字列を使ってはならない。
+# GitHub Actions は workflow_call 経由でも caller/callee 双方の concurrency group を
+# 評価するため、同一名にすると caller/callee 間のデッドロックと判定され、
+# job が 1 つも起動せず run がキャンセルされる（Issue #106）。
+# caller 側は `dependency-unblock-check-caller-<run_id>` のように区別すること。
+
+name: Dependency Unblock Check
+
+on:
+  schedule:
+    # 毎週月曜 10:15 JST (01:15 UTC)。Dependabot 09:15 JST /
+    # Dependency Audit 09:00・09:45 JST より後に置く
+    - cron: "15 1 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "sync（ファイル検査のみ）または full（API 検査 + probe）"
+        required: false
+        type: choice
+        options:
+          - full
+          - sync
+        default: full
+  workflow_call:
+    inputs:
+      ledger-path:
+        description: >-
+          台帳 JSON のリポジトリ相対パス。未指定時は scripts/ci/dependabot-unblock.json
+        required: false
+        type: string
+      node-version:
+        description: "評価器と probe を動かす Node.js のバージョン。未指定時は 24"
+        required: false
+        type: string
+      mode:
+        description: >-
+          `sync` は台帳と dependabot.yml のファイル検査のみを行い、ネットワークも
+          コマンド実行も行わない。`full` は追跡 Issue の検査と probe まで行う。
+          未指定時は full
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  # probe 成功時に「いつ解除可能になったか」を追跡 Issue へ記録するために必要
+  issues: write
+
+concurrency:
+  group: dependency-unblock-check-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  dependency-unblock-check:
+    name: Dependency Unblock Check
+    runs-on: ubuntu-latest
+    # probe は install + build + test を回すため既定より長く取る
+    timeout-minutes: 30
+    steps:
+      # caller のトリガー制限（3 種）は散文の契約だけでは強制できないため、callee 側でも拒否する。
+      # 台帳の steps は任意のシェルコマンドであり、PR 由来の内容を実行させてはならない
+      - name: Reject pull request triggers
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request | pull_request_target)
+              echo "::error::dependency-unblock-check must not be reachable from pull request events (ADR-0013)"
+              exit 1
+              ;;
+          esac
+
+      # probe が動かす子プロセスに git の認証ヘッダを渡さないため credentials を残さない。
+      # 評価器が使う git 操作は checkout -- . / clean -fd だけでネットワークを必要としない
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version || '24' }}
+
+      - name: Validate unblock check inputs
+        env:
+          MODE: ${{ inputs.mode || 'full' }}
+          LEDGER_PATH: ${{ inputs['ledger-path'] }}
+        run: |
+          case "$MODE" in
+            sync | full) ;;
+            *)
+              echo "::error::mode must be sync or full"
+              exit 1
+              ;;
+          esac
+
+          if [[ -n "$LEDGER_PATH" ]]; then
+            case "$LEDGER_PATH" in
+              /* | *..*)
+                echo "::error::ledger-path must be a relative path without .."
+                exit 1
+                ;;
+            esac
+          fi
+
+      - name: Enable Corepack (Yarn 4)
+        if: ${{ github.repository == 'kmryst/idp-golden-path' }}
+        run: |
+          corepack enable
+          yarn --version
+
+      # reusable workflow 自身の評価器を単体テストする。
+      # 消費側から呼ばれた場合は caller リポジトリにこのテストファイルがないため実行しない
+      - name: Test unblock check evaluator
+        if: ${{ github.repository == 'kmryst/idp-golden-path' }}
+        run: node --test scripts/ci/dependabot-unblock-check.test.mjs
+
+      # actions/checkout は reusable workflow の caller を checkout する。
+      # 評価器は workflow 定義と同じ repository/SHA から取得し、@v1 の実装と一体で固定する
+      - name: Validate unblock check evaluator source
+        if: ${{ github.repository != 'kmryst/idp-golden-path' }}
+        env:
+          WORKFLOW_REPOSITORY: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          WORKFLOW_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          if [[ "$WORKFLOW_REPOSITORY" != "kmryst/idp-golden-path" ]]; then
+            echo "::error::unexpected reusable workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::reusable workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout unblock check evaluator
+        if: ${{ github.repository != 'kmryst/idp-golden-path' }}
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          path: .idp-golden-path-workflow
+          sparse-checkout: |
+            scripts/ci/npm-audit-policy.mjs
+            scripts/ci/dependabot-unblock-check.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # exit 10（UNBLOCKED）と exit 1（MECHANISM）はどちらも赤にするが、
+      # ログから区別できるよう exit code はそのまま伝播させる
+      - name: Run dependency unblock check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UNBLOCK_LEDGER_PATH: ${{ inputs['ledger-path'] }}
+          MODE: ${{ inputs.mode || 'full' }}
+        run: |
+          script="$GITHUB_WORKSPACE/scripts/ci/dependabot-unblock-check.mjs"
+          if [[ "$GITHUB_REPOSITORY" != "kmryst/idp-golden-path" ]]; then
+            script="$GITHUB_WORKSPACE/.idp-golden-path-workflow/scripts/ci/dependabot-unblock-check.mjs"
+          fi
+
+          set +e
+          node "$script" "$MODE"
+          status=$?
+          set -e
+
+          case "$status" in
+            0)
+              echo "OK: still blocked"
+              ;;
+            10)
+              echo "::error::UNBLOCKED: an ignored dependency now builds. Remove the ignore (see the Job Summary)"
+              ;;
+            *)
+              echo "::error::MECHANISM: the unblock check mechanism is broken (see the Job Summary)"
+              ;;
+          esac
+          exit "$status"

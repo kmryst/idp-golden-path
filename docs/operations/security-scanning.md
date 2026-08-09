@@ -21,6 +21,8 @@ required status checks との関係は [branch-protection.md](./branch-protectio
 
 なお Dependabot version updates（`.github/dependabot.yml`）は「新しいバージョンが出たら更新 PR を作る」仕組みであり、
 既知脆弱性（CVE）の検出・警告は Dependency Audit が担います。
+`.github/dependabot.yml` の `ignore`（上流の非互換で止めているメジャー更新）の解除条件を週次で実測検証する仕組みは別立てで、
+正本は [dependency-unblock-check.md](./dependency-unblock-check.md) です。
 
 ## Dependency Audit
 
