@@ -1,0 +1,11 @@
+[
+  {
+    "directory": "/backstage",
+    "dependency-name": "jsdom",
+    "probe": true,
+    "spec": "jsdom@30",
+    "steps": ["yarn up jsdom@30", "yarn tsc", "CI=1 yarn test"],
+    "review-by": "2026-11-02",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/146"
+  }
+]

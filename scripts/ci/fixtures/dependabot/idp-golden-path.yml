@@ -1,0 +1,83 @@
+version: 2
+# 有効な ignore の横断一覧: https://github.com/search?q=user%3Akmryst+label%3Adependabot-ignore+is%3Aissue+is%3Aopen&type=issues
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:15"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:15"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    groups:
+      npm-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
+
+  # backstage/ は Yarn workspaces。yarn.lock のあるルート 1 エントリで
+  # packages/* / plugins/* の全 workspace がカバーされる
+  # （package-ecosystem は Yarn でも "npm" のままでよい）
+  - package-ecosystem: "npm"
+    directory: "/backstage"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:15"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    groups:
+      # react / react-dom / react-router 等は密結合しており、単独更新すると
+      # 相方が取り残されて CI が壊れる（PR #53 / #54 / #56 で発生）。
+      # 1 グループにまとめて 1 PR で更新されるようにする。
+      # Dependabot は「複数グループにマッチする依存は最初にマッチした
+      # グループに入る」（first-match-wins）ため、@types/react* を npm-dev では
+      # なく react グループに入れるべく、react グループを npm-dev より前に置く。
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router"
+          - "react-router-*"
+          - "@types/react"
+          - "@types/react-dom"
+      # @backstage/* は prod / dev 問わず同じ backstage/yarn.lock を触るため、
+      # 1件ずつ別PRになると1件マージするたびに残り全部が rebase 必要になる
+      # （Issue #149 で実測: 同時に5件の @backstage/* patch 更新PRが競合）。
+      # 1グループにまとめて1PRで更新されるようにする。
+      # dependency-type は指定しない。@backstage/plugin-techdocs-backend 等の
+      # prod dependencies 側の Backstage パッケージも同じグループに入れるため。
+      # react グループと同じ理由で first-match-wins の順序制約があるため、
+      # このグループは react グループより後、npm-dev グループより前に置く。
+      # npm-dev より後ろに置くと、@backstage/cli のような devDependencies 側の
+      # Backstage パッケージが先に npm-dev にマッチして吸われ、グループが再び分裂する。
+      backstage:
+        patterns:
+          - "@backstage/*"
+      npm-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
+    ignore:
+      # jsdom 30 は CSS.escape の IDL brand check 厳格化により、
+      # MUI v4 (@material-ui/styles + JSS) 経由で App.test.tsx が TypeError で落ちる（PR #132 で検出）。
+      # 実測: jsdom のみ 29.1.1 に戻すと yarn test / yarn tsc とも pass（他5件は更新したまま）。
+      # 本番影響なし: jsdom は devDependency でテスト環境専用。
+      # 解除条件: @backstage/core-components の依存が @material-ui/core → @mui/material に変わったら。
+      # 見直し期限: 2026-11-02（Issue #134 の audit 例外と棚卸し時期を揃える）
+      # 追跡: Issue #146
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
