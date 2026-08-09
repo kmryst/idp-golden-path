@@ -84,7 +84,11 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 - `tracking` の重複は正常です（例: terraform-hannibal の `/` と `/client` の 2 エントリが同一 Issue を指す）
 - `spec` を固定するのは、`@latest` だと「7 は通るが 8 は通らない」ときに判定が曖昧になるためです。
   最新メジャーが `spec` より先に進むと Job Summary で警告が出るので、その時点で `spec` の更新を検討します
-- probe は各エントリの前後で対象ディレクトリを `git checkout -- . && git clean -fd` + `node_modules` 削除でリセットします
+- probe は各エントリの前後で対象ディレクトリを
+  `git checkout -- . && git clean -fd -e .idp-golden-path-workflow` + `node_modules` 削除でリセットします
+  （消費側で `directory` が `/` のとき、評価器の sparse checkout を消さないための除外です）
+- probe の子プロセスには `GITHUB_TOKEN` / `GH_TOKEN` / `NODE_AUTH_TOKEN` / `NPM_TOKEN` を渡しません。
+  未検証の新メジャーとその推移依存を実行する仕組みであるためです
 
 ## `dependabot.yml` コメントの正典書式
 
@@ -104,6 +108,8 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 - 抽出正規表現: `見直し期限:\s*(\d{4}-\d{2}-\d{2})` / `追跡:\s*Issue #(\d+)`
 - **見直し期限の正本は `dependabot.yml` のコメント側**です。期限超過判定もこちらの日付で行います
 - `versions:` 形式の ignore は規約外です（`update-types` のみ）。書くと赤になります
+- `ignore:` はブロックシーケンスで書きます。flow style（`ignore: [{...}]`）やクォート付きキーは赤になります
+  （見逃すと「台帳にも追跡 Issue にも載らない ignore」が成立してしまうため）
 - ファイル先頭の横断検索リンクコメントは、いずれのエントリにも帰属しません
 
 ## ラベル運用
@@ -172,7 +178,7 @@ jobs:
 
 導入時のチェックリスト:
 
-- [ ] `pull_request` / `pull_request_target` を**張っていない**（セキュリティ契約。ADR-0013）
+- [ ] `pull_request` / `pull_request_target` を**張っていない**（セキュリティ契約。ADR-0013。callee 側でも拒否するので、張ると即 fail する）
 - [ ] concurrency group が callee と別名になっている
 - [ ] `permissions` に `issues: write` がある（記録コメントの投稿に必要）
 - [ ] 消費側リポジトリに `scripts/ci/dependabot-unblock.json` を置いた（`ledger-path` input で場所を変えられる）

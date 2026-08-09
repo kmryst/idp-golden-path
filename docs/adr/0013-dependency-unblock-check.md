@@ -142,6 +142,17 @@ API と probe を伴う検査は `full` のみに置く。
 
 この 3 条件を満たさない緩和は、本 ADR の改訂を要する。
 
+契約を散文だけに委ねないため、workflow 自身にも `github.event_name` が `pull_request` /
+`pull_request_target` なら即座に fail するステップを置く（消費側 caller の書き間違いを callee 側で拒否する）。
+
+あわせて、probe の子プロセスには `GITHUB_TOKEN` / `GH_TOKEN` / `NODE_AUTH_TOKEN` / `NPM_TOKEN` を渡さず、
+最初の `actions/checkout` も `persist-credentials: false` とする。probe は「まだ検証していない上流の新メジャー」を
+毎週引いて実行する仕組みであり、postinstall スクリプト 1 つで `issues: write` トークンが露出しうるためである。
+評価器本体は `process.env` から直接トークンを読むため、この除去は API 呼び出しに影響しない。
+job を「probe（`contents: read`）」と「コメント投稿（`issues: write`）」に分割する案は、
+artifact の受け渡しでジョブ構造が複雑になる割に得られる分離が限定的なため今回は採らず、
+子プロセス環境からのトークン除去で対処する。
+
 ### 9. 索引表の廃止と `dependabot-ignore` ラベル検索との関係
 
 有効な ignore の横断一覧は、手書きの索引表ではなく `dependabot-ignore` ラベルの横断検索で得る方針に移行済み

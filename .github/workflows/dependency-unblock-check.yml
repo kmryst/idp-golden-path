@@ -81,8 +81,25 @@ jobs:
     # probe は install + build + test を回すため既定より長く取る
     timeout-minutes: 30
     steps:
+      # caller のトリガー制限（3 種）は散文の契約だけでは強制できないため、callee 側でも拒否する。
+      # 台帳の steps は任意のシェルコマンドであり、PR 由来の内容を実行させてはならない
+      - name: Reject pull request triggers
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request | pull_request_target)
+              echo "::error::dependency-unblock-check must not be reachable from pull request events (ADR-0013)"
+              exit 1
+              ;;
+          esac
+
+      # probe が動かす子プロセスに git の認証ヘッダを渡さないため credentials を残さない。
+      # 評価器が使う git 操作は checkout -- . / clean -fd だけでネットワークを必要としない
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v7

@@ -14,6 +14,7 @@ import {
   decideVerdict,
   extractIgnoreEntries,
   parseLedger,
+  probeEnvironment,
   postUnblockComments,
   renderSummary,
   runFull,
@@ -283,6 +284,42 @@ test("throws on a duplicated ignore entry", () => {
     () => extractIgnoreEntries(withIgnoreBody(`${VALID_BODY}\n${VALID_BODY}`)),
     UnblockCheckError,
   );
+});
+
+test("throws on a flow-style ignore instead of silently skipping it", () => {
+  // 見逃すと「台帳にも追跡 Issue にも載らない ignore」が成立してしまう
+  const source = [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "npm"',
+    '    directory: "/"',
+    '    ignore: [{dependency-name: "evil", update-types: ["version-update:semver-major"]}]',
+  ].join("\n");
+  assert.throws(() => extractIgnoreEntries(source), UnblockCheckError);
+});
+
+test("throws on a quoted ignore key", () => {
+  const source = [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "npm"',
+    '    directory: "/"',
+    '    "ignore":',
+  ].join("\n");
+  assert.throws(() => extractIgnoreEntries(source), UnblockCheckError);
+});
+
+test("comment metadata is not carried over to the next ignore entry", () => {
+  const body = [
+    "      # 見直し期限: 2026-11-02（棚卸し）",
+    "      # 追跡: Issue #542",
+    '      - dependency-name: "typescript"',
+    "        # 見直し期限: 2099-01-01",
+    "        # 追跡: Issue #999",
+    '        update-types: ["version-update:semver-major"]',
+    '      - dependency-name: "eslint"',
+  ].join("\n");
+  assert.throws(() => extractIgnoreEntries(withIgnoreBody(body)), UnblockCheckError);
 });
 
 test("throws on tab characters", () => {
@@ -612,6 +649,29 @@ test("warns when the latest major moved past the ledger spec", () => {
   const { warnings } = runProbes(parsed(), deps);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /台帳の spec jsdom@30 より先に進んでいる/);
+});
+
+test("the probe environment carries no workflow or registry token", () => {
+  const env = probeEnvironment({
+    PATH: "/usr/bin",
+    GITHUB_TOKEN: "secret",
+    GH_TOKEN: "secret",
+    NODE_AUTH_TOKEN: "secret",
+    NPM_TOKEN: "secret",
+  });
+  assert.equal(env.CI, "1");
+  assert.equal(env.PATH, "/usr/bin");
+  for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "NODE_AUTH_TOKEN", "NPM_TOKEN"]) {
+    assert.equal(Object.hasOwn(env, key), false);
+  }
+});
+
+test("the reset command keeps the reusable workflow sparse checkout", () => {
+  const deps = probeDeps({ failingStep: "yarn tsc" });
+  runProbes(parsed(), deps);
+  for (const [command] of deps.commands.filter(([c]) => c.startsWith("git checkout"))) {
+    assert.match(command, /-e \.idp-golden-path-workflow/);
+  }
 });
 
 // ---------------------------------------------------------------------------
