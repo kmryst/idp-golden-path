@@ -13,7 +13,8 @@ ${{ values.description }}
 | `CLAUDE.md` | AI Agent（Claude Code）向けの作業ルール入口 |
 | `CONTRIBUTING.md` | Issue / Branch / Commit / PR / Label / 軽運用・厳密運用の正本 |
 | `.github/labels.yml` | ラベル定義の正本（push で自動同期） |
-| `.github/workflows/` | PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check（実体は [idp-golden-path の reusable workflows](https://github.com/kmryst/idp-golden-path/tree/main/.github/workflows) をタグ固定 `@v1` で参照。更新は Dependabot のバージョンアップ PR で取り込む） |
+| `.mise.toml` | ローカル開発ツールチェーン（Node.js 等）のバージョンの正本。CI pin との一致を Toolchain Version Check が検査する |
+| `.github/workflows/` | PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check / Toolchain Version Check（実体は [idp-golden-path の reusable workflows](https://github.com/kmryst/idp-golden-path/tree/main/.github/workflows) をタグ固定 `@v1` で参照。更新は Dependabot のバージョンアップ PR で取り込む） |
 | `.github/pull_request_template.md` / `ISSUE_TEMPLATE/` | PR / Issue テンプレート |
 | `scripts/github/` | Issue / PR 作成・ラベル同期・ブランチ cleanup の helper |
 | `docs/adr/` | Architecture Decision Record（0001 に生成経緯を記録済み） |
@@ -22,12 +23,16 @@ ${{ values.description }}
 
 ## 初期セットアップ（生成後にやること）
 
-1. 依存をインストールし、ローカルで CI と同じチェックを実行できるようにする
+1. ツールチェーンと依存をインストールし、ローカルで CI と同じチェックを実行できるようにする
 
    ```bash
+   mise install   # .mise.toml の宣言どおりに Node.js 等を取得する
    npm ci
    npm run lint:md
    ```
+
+   Terraform を導入する場合は `.mise.toml` のコメントに従って `terraform` を宣言し、
+   Terraform を使う workflow の pin も同じ値に揃える。両者の一致は Toolchain Version Check が PR ごとに検査する。
 
 2. ラベルが同期されていることを確認する（初回 push 時に Sync Labels workflow が実行される。
    手動同期は `./scripts/github/sync-labels.sh`）

@@ -1,0 +1,23 @@
+# ローカル開発ツールチェーンの正本（ADR-0014）。
+#
+# ここで宣言したバージョンと CI の pin が一致することは、
+# .github/workflows/toolchain-version-check.yml が PR ごとに機械検査する。
+# バージョンを変える場合は、必ず同じ PR で CI 側の pin も更新すること。
+#
+# 使い方:
+#   mise install    # 宣言したバージョンを取得する
+#   mise current    # 実効バージョンを確認する
+#
+# 実際にこのリポジトリで使うツールだけを宣言する。tflint / terraform-docs /
+# pre-commit は本リポジトリでは使っていないため宣言しない（terraform-hannibal
+# の .mise.toml との差分は意図的なもの）。
+# Yarn 4 は Corepack（backstage/package.json の packageManager）が版を決めるため、
+# mise では宣言しない。
+
+[tools]
+# 3 リポジトリ共通の標準バージョン。
+# リモート state に記録済みの terraform_version が 1.14.8 であり、
+# state は前方互換がないためダウングレードできない（ADR-0014）。
+terraform = "1.14.8"
+# backstage/package.json の engines は "22 || 24"。CI の setup-node 既定も 24 系。
+node = "24.18.0"

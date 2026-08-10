@@ -88,5 +88,8 @@ no-op ペア workflow 方式での required 昇格を再検討する。
   検査 step を実行せず、免除理由を記録する step を実行して `Success` で終了する
 - 他リポジトリから reusable workflow として呼び出す場合も、caller workflow と called workflow の job は常に起動する。
   Dependabot の免除条件は called workflow 内の個々の step だけに置き、branch protection が要求する check を必ず作成する
-- `.github/workflows/` の CI ガードレール 6 本は、他リポジトリから `@v1` 参照される reusable workflows を兼ねる（[ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）。job name や inputs の変更は本リポジトリの required status checks だけでなく消費側リポジトリの check run 名にも影響するため、破壊的変更は major タグ（`v2`）として扱う
+- `.github/workflows/` の CI ガードレールは、他リポジトリから `@v1` 参照される reusable workflows を兼ねる（[ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）。job name や inputs の変更は本リポジトリの required status checks だけでなく消費側リポジトリの check run 名にも影響するため、破壊的変更は major タグ（`v2`）として扱う
+- `Toolchain Version Check`（`.github/workflows/toolchain-version-check.yml`、[ADR 0014](../adr/0014-terraform-toolchain-version-standardization.md)）は
+  新規追加のガードレールのため、現時点では required status checks に追加しない。
+  昇格するかは、`.mise.toml` と CI pin の運用が定着してから別途判断する
 - 一時的に保護を外す操作（`gh api -X DELETE .../protection`）は、必ずユーザーの明示的な許可を得てから行う

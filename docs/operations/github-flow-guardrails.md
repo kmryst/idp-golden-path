@@ -23,6 +23,7 @@
 - Markdown Lint / Issue Template Check など、service baseline skeleton が持つ共通 CI ガードレールは既存 2 リポジトリで未導入または未整合である。導入や required 化は、運用負荷を見て別 Issue で判断する。
 - CodeQL / Dependency Audit も `workflow_call` を追加し reusable workflow 化した（Issue #110）。`dependency-audit.yml` は `package-manager`（npm / yarn）・`working-directory` を input 化し、本リポジトリ自身（Yarn・`backstage/`）以外の npm ベースの消費側でも使えるよう汎用化している。npm 消費側は、修正版がない開発依存 advisory に限り、期限・追跡 Issue を伴う `npm-audit-exceptions` input で GHSA 単位の一時例外を宣言できる。runtime 依存、Critical、未許可の High は引き続き fail closed とする。
   yarn 消費側は同形式の `yarn-audit-exceptions` input、本リポジトリ自身は `scripts/ci/yarn-audit-exceptions.json` で期限付き例外を宣言できる（Critical / 未許可 High は fail closed。正本は security-scanning.md、判断は ADR-0008 追記 2026-08-05）。両 workflow は新規導入のガードレールであり、消費側の required status checks には即座に追加しない（段階的 required 化は消費側リポジトリごとに判断する）。
+- Toolchain Version Check（`toolchain-version-check.yml`、ADR-0014）を共通ガードレールに追加した。ローカル正本 `.mise.toml` の Terraform 宣言と、workflow に直書きされた CI pin の一致を PR ごとに機械検査する。`mise-config-path` / `workflow-paths` を input 化し、リポジトリごとに異なる workflow 構成へ対応する。`.mise.toml` 不在は skip ではなく fail とする（正本を消した状態が緑になると drift を見逃すため）。Dependabot PR も免除しない（人間向けの記述規約ではなく機械的な整合性検査のため）。新規ガードレールのため required status checks には即座に追加しない。
 - helper scripts は共通化途上であり、消費側リポジトリは `scripts/github/lib/common.sh` 形式にまだ揃っていない。
 - deploy / destroy、Terraform apply、backend / frontend build、smoke test などのドメイン固有 workflow は、各リポジトリ固有の責務として残す。
 
@@ -114,6 +115,8 @@ Dependency Audit / CodeQL などの追加 security signal は、検出頻度と�
 - Issue / PR template
 
 workflow job 名を変える場合は、本リポジトリの required status checks だけでなく、消費側リポジトリの check run 名にも影響します。破壊的変更は ADR 0008 のバージョニング方針に従います。
+
+Dependabot の免除は、Commitlint / PR Policy Check のような「人間向けの記述規約」に限ります。Markdown Lint / CodeQL / Toolchain Version Check のような機械的な検査は Dependabot PR でも免除しません。
 
 Dependabot の免除判定は reusable workflow 内の step に集約します。消費側の caller workflow と called workflow の job は Dependabot PR でも常に起動し、
 branch protection が要求する check を作成します。PR 作成者が `dependabot[bot]` の場合は検査 step の代わりに免除理由を記録する step を実行し、
