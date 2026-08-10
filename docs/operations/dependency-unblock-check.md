@@ -16,6 +16,26 @@ Dependabot の `ignore` が「もう外せる」状態になっていないか�
 | `scripts/ci/dependabot-unblock-check.test.mjs` | `node --test` による単体テスト |
 | `scripts/ci/dependabot-unblock.json` | 台帳（本リポジトリ分） |
 | `scripts/ci/fixtures/dependabot/*.yml` | 3 リポジトリの `dependabot.yml` 実ファイルのコピー（抽出器のテスト用） |
+| `scripts/ci/fixtures/repo/{blocked,unblocked}/` | 台帳と `dependabot.yml` が 1:1 で対応した偽リポジトリ（`runSync` / `runFull` のテスト用） |
+
+### テストの分け方
+
+`runSync` / `runFull` の**ふるまい**は、実台帳ではなく `scripts/ci/fixtures/repo/` の偽リポジトリで検証します。
+
+| 偽リポジトリ | 中身 | 再現する状態 |
+| --- | --- | --- |
+| `fixtures/repo/blocked/` | probe が必ず失敗するエントリ 1 件（`steps` の末尾が `exit 1`） | 緑 `OK: still blocked`（exit 0） |
+| `fixtures/repo/unblocked/` | 必ず失敗するエントリ + 必ず成功するエントリ（`exit 0`）各 1 件 | `UNBLOCKED`（exit 10） |
+
+実パッケージのインストールもネットワークアクセスもなしに両方の分岐を踏めます。
+追跡 Issue 番号（#9001 / #9002）は架空で、テストは偽 GitHub クライアントを使います。
+見直し期限は `2099-01-01` 固定で、期限超過検査が偶発的に発火しません。
+
+実台帳と実 `.github/dependabot.yml` を読むテストは、**番人（`GUARD:` で始まる 1 本）だけ**です。
+これは評価器のふるまいの検証ではなく、「台帳と `dependabot.yml` の片方だけを更新した」ずれを
+週次ジョブより先にローカルで捕まえるためのものです。
+ignore を足す / 外すときは両方を同一 PR で更新すれば通ります。
+番人が落ちたら評価器ではなく自分の変更を直します。
 
 ## 赤緑の読み方
 

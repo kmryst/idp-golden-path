@@ -1,0 +1,24 @@
+version: 2
+# テスト用の偽リポジトリ。GitHub の Dependabot はリポジトリルートの
+# .github/dependabot.yml しか読まないため、この位置のファイルは実運用に影響しない。
+# 対になる台帳は同じ偽リポジトリの scripts/ci/dependabot-unblock.json。
+# 追跡 Issue 番号は架空（テストは偽 GitHub クライアントを使う）。
+# 見直し期限は遠い未来の固定日にしてあり、期限超過検査が偶発的に発火しない。
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # probe が必ず失敗するエントリ。1 件が unblocked になっても、
+      # 他エントリが still blocked のままであることを同じ run で確認するために置く。
+      # 見直し期限: 2099-01-01（フィクスチャ固定値。棚卸し対象ではない）
+      # 追跡: Issue #9001
+      - dependency-name: "fixture-still-blocked"
+        update-types: ["version-update:semver-major"]
+      # probe が必ず成功するエントリ（steps が全て exit 0）。
+      # 「上流が対応した = UNBLOCKED exit 10」を実パッケージなしで再現するために置く。
+      # 見直し期限: 2099-01-01（フィクスチャ固定値。棚卸し対象ではない）
+      # 追跡: Issue #9002
+      - dependency-name: "fixture-unblocked"
+        update-types: ["version-update:semver-major"]
