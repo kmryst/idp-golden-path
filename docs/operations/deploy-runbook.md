@@ -19,6 +19,19 @@ GitHub Actions（workflow_dispatch）で行う。
 | GitHub OIDC provider | `token.actions.githubusercontent.com`（アカウント共通。persistent 層は data source 参照） |
 | repo variable | `AWS_CICD_ROLE_ARN` = persistent 層の `github_actions_role_arn` output の値（`gh variable set AWS_CICD_ROLE_ARN --body <ARN>`） |
 
+## Terraform CLI のバージョン
+
+ローカルから Terraform を実行する前に、CLI が **1.14.8** であることを確認する
+（[ADR 0014](../adr/0014-terraform-toolchain-version-standardization.md)。正本はリポジトリルートの `.mise.toml`）。
+
+```bash
+mise install          # .mise.toml の宣言どおりに取得する
+terraform version     # 1.14.8 であること
+```
+
+state は前方互換がなく、記録された `terraform_version` より古い CLI での操作を拒否する。
+`persistent` 層の state は 1.14.8 で記録されているため、1.12.x 系の CLI では init すら通らない。
+
 ## 1. persistent 層（初回のみ / 変更時のみ、ローカルから手動）
 
 persistent 層は CI からは触らない（CI ロールの IAM 境界そのものを CI が書き換えられるべきではないため。ADR 0010）。

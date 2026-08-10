@@ -8,8 +8,9 @@ metadata:
   description: |
     新規サービスリポジトリを、確立済みの運用基盤つきで作成します。
     CLAUDE.md / CONTRIBUTING.md（軽運用・厳密運用 GitHub Flow）、ラベル定義、
-    CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check）、
-    Issue / PR テンプレート、helper scripts、ADR 運用、TechDocs / Catalog 対応が最初から有効です。
+    CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check /
+    Toolchain Version Check）、Issue / PR テンプレート、helper scripts、ローカルツールチェーンの正本（.mise.toml）、
+    ADR 運用、TechDocs / Catalog 対応が最初から有効です。
   tags:
     - golden-path
     - governance
@@ -124,7 +125,7 @@ spec:
     text:
       - title: 次にやること
         content: |
-          1. `npm ci && npm run lint:md` でローカル検証環境を確認する
+          1. `mise install` でツールチェーンを揃え、`npm ci && npm run lint:md` でローカル検証環境を確認する
           2. 最初の PR で CI の実行実績を作る
           3. `docs/operations/branch-protection.md` の手順で main ブランチ保護を適用する
           4. 技術選定は `docs/adr/` に ADR として記録してから実装を始める

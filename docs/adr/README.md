@@ -53,3 +53,4 @@ ADR はその正本を置き換えるものではなく、重要な設計判断�
 | [0011](./0011-catalog-registration-via-repository-owned-catalog-info.md) | Accepted | 既存リポジトリのカタログ登録を各リポジトリ所有の `catalog-info.yaml` + GitHub URL location へ移行する |
 | [0012](./0012-split-backstage-auth-config-by-environment.md) | Accepted | Backstage の auth provider 設定を環境別 config に分離する |
 | [0013](./0013-dependency-unblock-check.md) | Accepted | Dependabot ignore の解除条件を週次で実測検証し、朗報を「赤」で通知する |
+| [0014](./0014-terraform-toolchain-version-standardization.md) | Accepted | Terraform ツールチェーンのバージョンを 3 リポジトリで 1.14.8 に統一し、ローカル正本と CI pin の整合性を CI で検査する |

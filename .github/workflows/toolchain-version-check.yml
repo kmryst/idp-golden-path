@@ -1,0 +1,240 @@
+# Toolchain Version Check
+# 目的: ローカル正本（.mise.toml）が宣言するツールチェーンのバージョンと、
+#       CI workflow に直書きされた pin が一致することを機械検査する（設計判断は ADR-0014）
+#
+# 現状の検査対象は Terraform のみ。Terraform の state は前方互換がなく、記録された
+# terraform_version より古い CLI での操作を拒否するため、宣言と pin の drift は
+# 「その層をもう更新できない」という回復困難な事故に直結する（ADR-0014 背景）。
+#
+# このファイルは本リポジトリの PR チェックであると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/toolchain-version-check.yml@v1` で呼び出す
+# reusable workflow でもある（バージョニング方針は ADR-0008）
+#
+# 呼び出し側リポジトリの前提: リポジトリルート（または `mise-config-path` で指定した場所）に
+# `.mise.toml` があること。存在しない場合は skip せず fail する（理由は ADR-0014）。
+# 検査は checkout したファイルの静的解析だけで完結し、mise / Terraform のインストールは行わない。
+#
+# Dependabot PR も検査対象にする。Commitlint / PR Policy Check の免除は「人間向けの
+# 記述規約を bot に要求しない」ためのものだが、本 workflow は機械的な整合性検査であり、
+# Dependabot が setup-terraform や workflow を書き換える可能性がある以上、免除すると
+# 検知の穴になる（Markdown Lint / CodeQL と同じ扱い）。
+#
+# workflow_call の caller は pull_request イベントから呼び出すこと。
+
+name: Toolchain Version Check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      mise-config-path:
+        description: >-
+          ローカル正本の mise 設定ファイルのリポジトリ相対パス。未指定時は `.mise.toml`
+        required: false
+        type: string
+      workflow-paths:
+        description: >-
+          CI pin を検査する対象ファイルの glob を改行区切りで指定する。
+          未指定時は `.github/workflows/*.yml` と `.github/workflows/*.yaml`
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # 消費側リポジトリの caller workflow は、この group と同一の文字列を使ってはならない。
+  # GitHub Actions は workflow_call 経由でも caller/callee 双方の concurrency group を
+  # 評価するため、同一名にすると「caller と callee 間のデッドロック」と判定され、
+  # job が1つも起動せず run がキャンセルされる
+  # （ticket-c2c-platform PR #299 で実測。ADR-0008 追記・Issue #106参照）。
+  # caller 側は `toolchain-version-check-caller-<PR番号>` のように区別すること
+  # （service-baseline skeleton の caller workflow を参照）。
+  group: toolchain-version-check-${{ github.event.pull_request.number }}
+  # 実行中 run のキャンセルは CANCELLED check run を commit に残し、
+  # required status checks の判定に混入して PR を恒久的にブロックし得るため cancel しない。
+  cancel-in-progress: false
+
+jobs:
+  toolchain-version-check:
+    name: Toolchain Version Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # ubuntu-latest の python3 は 3.11 以降で tomllib を標準で持つ。
+      # reusable workflow として呼び出し側リポジトリを checkout して動くため、
+      # 本リポジトリのローカルスクリプトには依存させずインライン化している。
+      #
+      # 注意: この run block 内に GitHub Actions の式開始記号を literal で書かないこと。
+      # run block は bash に渡る前に Actions が式展開するため、式として解釈されて壊れる。
+      # 評価器が「式による間接参照は pin ではない」と判定するための記号は、
+      # スクリプト内で文字列連結して組み立てている（EXPRESSION_PREFIX）。
+      - name: Compare .mise.toml with CI pins
+        env:
+          MISE_CONFIG_PATH: ${{ inputs['mise-config-path'] }}
+          WORKFLOW_PATHS: ${{ inputs['workflow-paths'] }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob
+          import os
+          import re
+          import sys
+          import tomllib
+
+          # GitHub Actions の式開始記号（"$" + "{{"）。この run block に literal で
+          # 書くと Actions 自身が式として展開してしまうため、実行時に組み立てる。
+          EXPRESSION_PREFIX = "$" + "{{"
+
+          mise_path = os.environ.get("MISE_CONFIG_PATH") or ".mise.toml"
+
+          raw_patterns = os.environ.get("WORKFLOW_PATHS") or ""
+          patterns = [line.strip() for line in raw_patterns.splitlines() if line.strip()]
+          if not patterns:
+              patterns = [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+          errors = []
+          notes = []
+
+          # --- ローカル正本の読み取り ---
+          # 存在しない場合に skip すると、正本を消した・移した状態が「緑」になり、
+          # 本 workflow が防ごうとしている drift をそのまま見逃す（ADR-0014）。
+          declared = None
+          config_present = os.path.isfile(mise_path)
+          if not config_present:
+              errors.append(
+                  "ローカル正本 `" + mise_path + "` が見つかりません。"
+                  "パスが違う場合は `mise-config-path` input で指定してください（ADR-0014）"
+              )
+          else:
+              config = None
+              try:
+                  with open(mise_path, "rb") as fh:
+                      config = tomllib.load(fh)
+              except tomllib.TOMLDecodeError as exc:
+                  errors.append("`" + mise_path + "` の TOML 解析に失敗しました: " + str(exc))
+
+              if config is not None:
+                  entry = (config.get("tools") or {}).get("terraform")
+                  if isinstance(entry, str):
+                      declared = entry
+                  elif isinstance(entry, dict):
+                      declared = entry.get("version")
+                  elif isinstance(entry, list) and entry:
+                      first = entry[0]
+                      declared = first if isinstance(first, str) else (first or {}).get("version")
+
+                  if declared is not None and not isinstance(declared, str):
+                      errors.append(
+                          "`" + mise_path + "` の `[tools] terraform` の値を文字列として解釈できません"
+                      )
+                      declared = None
+
+          # --- CI pin の抽出 ---
+          # env の TERRAFORM_VERSION と hashicorp/setup-terraform の terraform_version を対象にする。
+          # 式による間接参照（env 参照など）は実体ではなく参照なので pin とみなさない。
+          pin_pattern = re.compile(
+              r"""^\s*(?:-\s*)?(TERRAFORM_VERSION|terraform_version)\s*:\s*["']?([^"'\s#]+)["']?"""
+          )
+          version_pattern = re.compile(r"^\d+\.\d+\.\d+$")
+
+          files = sorted({path for pattern in patterns for path in glob.glob(pattern, recursive=True)})
+          pins = []
+          for path in files:
+              if not os.path.isfile(path):
+                  continue
+              with open(path, encoding="utf-8") as fh:
+                  for lineno, line in enumerate(fh, start=1):
+                      match = pin_pattern.match(line)
+                      if not match:
+                          continue
+                      if EXPRESSION_PREFIX in line.split(":", 1)[1]:
+                          continue
+                      value = match.group(2)
+                      if not version_pattern.match(value):
+                          errors.append(
+                              "`" + path + "` L" + str(lineno) + ": `" + match.group(1)
+                              + "` の値 `" + value + "` を x.y.z 形式のバージョンとして解釈できません"
+                          )
+                          continue
+                      pins.append((path, lineno, match.group(1), value))
+
+          # --- 突き合わせ ---
+          if declared is None and pins and config_present:
+              errors.append(
+                  "`" + mise_path + "` は Terraform を宣言していませんが、CI に "
+                  + str(len(pins)) + " 件の pin があります。"
+                  "ローカル正本にも `[tools] terraform` を宣言してください（ADR-0014）"
+              )
+          elif declared is not None:
+              for path, lineno, key, value in pins:
+                  if value != declared:
+                      errors.append(
+                          "`" + path + "` L" + str(lineno) + " の `" + key + "` は `" + value
+                          + "` ですが、`" + mise_path + "` は `" + declared + "` を宣言しています。"
+                          "両者を一致させてください（ADR-0014）"
+                      )
+              if not pins:
+                  notes.append(
+                      "`" + mise_path + "` は Terraform `" + declared + "` を宣言していますが、"
+                      "検査対象に CI pin はありませんでした（比較対象なし）"
+                  )
+          elif config_present and not pins:
+              notes.append(
+                  "`" + mise_path + "` に Terraform の宣言も CI pin もありません（検査対象なし）"
+              )
+
+          # --- Job Summary ---
+          summary_lines = []
+          summary_lines.append("## Toolchain Version Check")
+          summary_lines.append("")
+          summary_lines.append("- ローカル正本: `" + mise_path + "`")
+          summary_lines.append(
+              "- Terraform 宣言: " + ("`" + declared + "`" if declared else "（なし）")
+          )
+          summary_lines.append(
+              "- 検査対象 glob: " + ", ".join("`" + p + "`" for p in patterns)
+          )
+          summary_lines.append(
+              "- 走査したファイル: " + str(len(files)) + " 件 / 検出した pin: " + str(len(pins)) + " 件"
+          )
+          summary_lines.append("")
+          if pins:
+              summary_lines.append("| ファイル | 行 | キー | 値 | 判定 |")
+              summary_lines.append("|---|---|---|---|---|")
+              for path, lineno, key, value in pins:
+                  verdict = "✅" if declared is not None and value == declared else "❌"
+                  summary_lines.append(
+                      "| `" + path + "` | " + str(lineno) + " | `" + key + "` | `" + value
+                      + "` | " + verdict + " |"
+                  )
+              summary_lines.append("")
+          for note in notes:
+              summary_lines.append("- " + note)
+          if notes:
+              summary_lines.append("")
+          summary_lines.append("---")
+          summary_lines.append("")
+          if errors:
+              summary_lines.append("❌ " + str(len(errors)) + " 件の不整合があります")
+              summary_lines.append("")
+              for err in errors:
+                  summary_lines.append("- " + err)
+          else:
+              summary_lines.append("✅ ローカル正本と CI pin は一致しています")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as fh:
+                  fh.write("\n".join(summary_lines) + "\n")
+          else:
+              print("\n".join(summary_lines))
+
+          for err in errors:
+              print("::error::" + err)
+
+          sys.exit(1 if errors else 0)
+          PY

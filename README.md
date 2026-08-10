@@ -21,6 +21,11 @@ deploy / destroy の実行はローカル CLI ではなく、GitHub Actions の 
 
 Backstage アプリ本体は [backstage/](./backstage/) にある。Node.js 22 または 24 が必要。
 
+ローカルのツールチェーン（Terraform / Node.js）のバージョンは `.mise.toml` を正本とする
+（[ADR 0014](./docs/adr/0014-terraform-toolchain-version-standardization.md) 参照）。
+[mise](https://mise.jdx.dev/) を使う場合は `mise install` で宣言どおりのバージョンが入る。
+`.mise.toml` の宣言と CI の pin が一致していることは、PR ごとに Toolchain Version Check が検査する。
+
 ```bash
 cd backstage
 yarn install
@@ -46,9 +51,10 @@ Destroy は誤爆防止のため確認入力（`destroy` のタイプ）を必�
 新規サービスリポジトリが以下の運用基盤つきで GitHub 上に作成され、Software Catalog に登録される。
 
 - CLAUDE.md / CONTRIBUTING.md（軽運用・厳密運用 GitHub Flow、必須 4 ラベル、Conventional Commits）
-- ラベル定義（`.github/labels.yml`）と CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check。
+- ラベル定義（`.github/labels.yml`）と CI ガードレール（PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Sync Labels / Issue Template Check / Toolchain Version Check。
   実体は本リポジトリの reusable workflows をタグ固定 `@v1` で参照、[ADR 0008](./docs/adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）
 - Issue / PR テンプレートと helper scripts（`scripts/github/`）
+- ローカルツールチェーンの正本（`.mise.toml`、[ADR 0014](./docs/adr/0014-terraform-toolchain-version-standardization.md)）
 - ADR 運用（生成経緯を記録した ADR-0001 つき）と TechDocs / Catalog 対応（`mkdocs.yml` / `catalog-info.yaml`）
 
 入力するのはサービス名・説明・オーナー・ライフサイクル（experimental / production）・公開先リポジトリ（GitHub の owner / repo と可視性）のみ。
@@ -73,6 +79,8 @@ Destroy は誤爆防止のため確認入力（`destroy` のタイプ）を必�
 - [ADR 0010](./docs/adr/0010-ci-driven-deploy-destroy-workflows.md) — 本番デプロイ / 破棄は workflow_dispatch の GitHub Actions で実行する
 - [ADR 0011](./docs/adr/0011-catalog-registration-via-repository-owned-catalog-info.md) — 既存リポジトリのカタログ登録を各リポジトリ所有の `catalog-info.yaml` + GitHub URL location へ移行する
 - [ADR 0012](./docs/adr/0012-split-backstage-auth-config-by-environment.md) — Backstage の auth provider 設定を環境別 config に分離する
+- [ADR 0013](./docs/adr/0013-dependency-unblock-check.md) — Dependabot ignore の解除条件を週次で実測検証し、朗報を「赤」で通知する
+- [ADR 0014](./docs/adr/0014-terraform-toolchain-version-standardization.md) — Terraform ツールチェーンのバージョンを 3 リポジトリで 1.14.8 に統一し、ローカル正本と CI pin の整合性を CI で検査する
 
 ## 開発への参加
 

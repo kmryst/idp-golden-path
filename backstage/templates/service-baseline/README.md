@@ -16,7 +16,8 @@ service-baseline/
 
 - `CLAUDE.md` / `CONTRIBUTING.md` — 軽運用 / 厳密運用 GitHub Flow・必須 4 ラベル・Conventional Commits
 - `.github/labels.yml` + Sync Labels workflow — ラベル定義のコード管理
-- CI workflows — PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan
+- CI workflows — PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan / Toolchain Version Check
+- `.mise.toml` — ローカル開発ツールチェーンの正本（idp-golden-path ADR-0014。Terraform を導入する場合の標準値をコメントで案内）
 - `.github/pull_request_template.md` / `ISSUE_TEMPLATE/` — PR / Issue テンプレート
 - `scripts/github/` — Issue / PR 作成・ラベル同期・ブランチ cleanup helper
 - `docs/adr/` — ADR 運用ルールと生成経緯を記録した ADR-0001

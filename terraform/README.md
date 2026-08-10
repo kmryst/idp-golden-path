@@ -11,3 +11,13 @@
 
 state は S3 backend（`idp-golden-path-tfstate-ba25cd9e`）に層ごとの key で分離し、
 S3 ネイティブロック（`use_lockfile`）を使う。
+
+## Terraform CLI のバージョン
+
+**1.14.8**（3 リポジトリ共通の標準。[ADR 0014](../docs/adr/0014-terraform-toolchain-version-standardization.md)）。
+
+- ローカルの正本はリポジトリルートの `.mise.toml`。`mise install` で取得する
+- CI の pin は `.github/workflows/deploy.yml` / `destroy.yml` の `TERRAFORM_VERSION`
+- 両者が一致していることは Toolchain Version Check（`.github/workflows/toolchain-version-check.yml`）が PR ごとに検査する
+- state は前方互換がなく、記録された `terraform_version` より古い CLI での操作を拒否する。
+  バージョンを下げないこと。特に `persistent` 層は実リソースを持ったまま state が 1.14.8 で記録されている
