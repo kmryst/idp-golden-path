@@ -134,15 +134,41 @@ probe は**素の `ubuntu-latest`** で走ります。
 - 同リポジトリの `npm test` は jest で `src/**/*.spec.ts` を全部走らせ、その中に
   実 PostgreSQL / Valkey / OpenSearch へ接続する spec が含まれる。
   CI（`pr-check.yml`）では service container 付きで実行している
-- そのため `steps` は `npm install --no-audit --no-fund typescript@7` と `npm run build` の 2 つに留め、
-  `npm test` は入れていない
+- そのため `steps` に `npm test` は入れず、**外部サービスに触れないディレクトリ**に絞った
+  `npx jest src/observability` を使っている
 - probe の役割は「解除できるようになったか」の**検知**であって、アップグレードの完全な検証ではありません。
-  この ignore のブロッカーは `ts-jest` の peer 範囲であり、それは `npm install` が正確に検出します。
-  型の非互換は `npm run build`（tsc）が拾います
-- テストの最終確認は**解除 PR の CI** が担います（「`UNBLOCKED`（赤 exit 10）が出たときの手順」の 4）
+  テストの最終確認は**解除 PR の CI** が担います（「`UNBLOCKED`（赤 exit 10）が出たときの手順」の 4）
 
 `steps` を書くときは「このコマンドは、ネットワーク上の npm レジストリ以外に何かへ接続するか」を確認してください。
-接続するなら、そのコマンドを外すか、外部サービスに触れない範囲へ絞ります。
+接続するなら、そのコマンドを外すか、**外部サービスに触れない範囲へ絞ります**。
+絞るときは、ファイル 1 本を名指しするよりディレクトリ単位のほうが頑健です
+（名指しした spec が改名・削除されると probe は失敗し続け、緑のまま見逃す側へ倒れます）。
+
+### peer 制約が解除条件なら、それを踏むコマンドを必ず入れる
+
+**`npm install` は peer 違反を検出しません。** peer が競合していても
+`npm warn ERESOLVE overriding peer dependency` を出すだけで、**exit 0 で成功します**
+（`--strict-peer-deps` を付けても同じ結果になるケースがあります）。
+`npm install <pkg>@<major>` が通ったことは、その依存グラフが健全である証拠には**なりません**。
+
+解除条件が「上流パッケージの peer 範囲が広がること」である ignore では、
+install と `build` だけを `steps` に書くと、**上流が未対応のまま「通った」と誤判定します。**
+これは検知できない緑と逆向きの誤りで、`UNBLOCKED` の赤（朗報）が誤って鳴ります。
+
+peer 制約を**実際に踏むコマンド**（lint / test / 型チェックなど、その上流パッケージが
+実行時に読み込まれるもの）を必ず 1 つ以上入れてください。
+
+実例（ticket-c2c-platform の `/` の typescript、2026-08-10 に実測）:
+
+- 解除条件は `ts-jest` の peer から `<7` の上限が外れること
+- `npm install --no-audit --no-fund typescript@7` は warn のみで exit 0。`npm run build`（tsc）も通る。
+  `ts-jest` はどちらの経路でも読み込まれないため、2 つだけでは peer 違反が素通りする
+- 実際にこの 2 step だけの台帳で初回 `workflow_dispatch` を回したところ、
+  `UNBLOCKED: typescript@7.0.2 が通りました` の**誤報**が出た
+- `ts-jest` の非互換は jest の **transform 段階**で落ちるため（`The TypeScript compiler "typescript"
+  (version 7.0.2) does not expose the JavaScript compiler API required by ts-jest`）、
+  DB にも Valkey にも到達せず、**service container なしで検出できる**。
+  そこで 3 つ目の step に `npx jest src/observability` を追加して解決した
 
 ## `dependabot.yml` コメントの正典書式
 
