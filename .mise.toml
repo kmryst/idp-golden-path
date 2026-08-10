@@ -18,6 +18,6 @@
 # 3 リポジトリ共通の標準バージョン。
 # リモート state に記録済みの terraform_version が 1.14.8 であり、
 # state は前方互換がないためダウングレードできない（ADR-0014）。
-terraform = "1.12.1"
+terraform = "1.14.8"
 # backstage/package.json の engines は "22 || 24"。CI の setup-node 既定も 24 系。
 node = "24.18.0"
