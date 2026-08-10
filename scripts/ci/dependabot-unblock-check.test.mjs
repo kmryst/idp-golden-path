@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -31,6 +32,23 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPOSITORY = "kmryst/idp-golden-path";
 const TODAY = "2026-08-09";
 const OPTIONS = { today: TODAY, repository: REPOSITORY };
+
+// runSync / runFull のふるまいは、実リポジトリの台帳ではなく偽リポジトリに対して検証する。
+// 実台帳を読ませると (1) 「まだ通らない」エントリしかないため UNBLOCKED 経路を踏めず、
+// (2) 台帳を 1 件足しただけでコード無変更のままテストが落ちる。
+// 特に (2) が起きるのは「このジョブが朗報を出した直後に ignore を外す作業」であり、
+// 一番摩擦が起きてほしくない場面である。
+const FIXTURE_REPO_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  "repo",
+);
+// 全エントリの probe が必ず失敗する偽リポジトリ（緑 exit 0 の再現用）
+const BLOCKED_REPO = join(FIXTURE_REPO_DIR, "blocked");
+// 必ず失敗するエントリと必ず成功するエントリを 1 件ずつ持つ偽リポジトリ（exit 10 の再現用）
+const UNBLOCKED_REPO = join(FIXTURE_REPO_DIR, "unblocked");
+const BLOCKED_REPO_ISSUES = [9001];
+const UNBLOCKED_REPO_ISSUES = [9001, 9002];
 
 function fixture(name) {
   return readFileSync(join(FIXTURE_DIR, `${name}.yml`), "utf8");
@@ -88,6 +106,16 @@ function fakeGitHub(options = {}) {
       comments.set(number, [...(comments.get(number) ?? []), body]);
     },
   };
+}
+
+// 偽リポジトリの台帳が指す架空の追跡 Issue を、そのまま OPEN + ラベル付きで返すクライアント。
+// 既定では検査1・3・4 が全て通る（= 機構は健全）状態を作る
+function fixtureGitHub(trackingIssues, overrides = {}) {
+  return fakeGitHub({
+    issues: new Map(trackingIssues.map((number) => [number, openIssue(number)])),
+    labeled: [...trackingIssues],
+    ...overrides,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -724,83 +752,180 @@ test("does not repost when the same resolved version is already recorded", async
 // runSync / runFull
 // ---------------------------------------------------------------------------
 
-test("runSync passes against the repository's own ledger and dependabot.yml", () => {
-  const { verdict } = runSync(REPO_ROOT, OPTIONS);
-  assert.equal(verdict.exitCode, 0);
-  assert.match(verdict.headline, /^OK: still blocked/);
+// リセットコマンドだけは実行しない。フィクスチャは本リポジトリの作業ツリー内にあり、
+// 本当に git checkout -- . / git clean -fd を走らせてはならない
+const RESET_COMMAND_PREFIX = "git checkout -- .";
+
+// 偽リポジトリ用の deps。
+// steps は**実際に /bin/sh で実行する**。probe の成否をフェイクの文字列一致ではなく
+// 本物の exit code で決めるためで、台帳の steps（exit 1 / exit 0）がそのまま根拠になる。
+// resolveVersion は固定値を返し、npm view には出ない（テストはネットワークを使わない）
+function fixtureDeps(rootDir, options = {}) {
+  const {
+    github = fixtureGitHub(BLOCKED_REPO_ISSUES),
+    latest = "9.0.0",
+    resolved = "9.0.0",
+  } = options;
+  const commands = [];
+  const removed = [];
+
+  return {
+    commands,
+    removed,
+    github,
+    runCommand(command, cwd) {
+      commands.push([command, cwd]);
+      if (command.startsWith(RESET_COMMAND_PREFIX)) {
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        cwd: join(rootDir, cwd),
+        encoding: "utf8",
+        shell: false,
+      });
+      return {
+        status: result.status,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      };
+    },
+    resolveVersion(spec) {
+      return spec.includes("@") ? resolved : latest;
+    },
+    removeDirectory(directory) {
+      removed.push(directory);
+    },
+  };
+}
+
+test("runSync is green against the fixture repositories", () => {
+  for (const rootDir of [BLOCKED_REPO, UNBLOCKED_REPO]) {
+    const { verdict } = runSync(rootDir, OPTIONS);
+    assert.equal(verdict.exitCode, 0);
+    assert.match(verdict.headline, /^OK: still blocked/);
+  }
 });
 
 test("runSync never reaches command execution or the network", () => {
   // sync のセキュリティ契約: 台帳の steps を spawn しない。
   // runSync は deps を受け取らないため、注入経路そのものが存在しないことを型で示す
   assert.equal(runSync.length, 1);
-  const { summary } = runSync(REPO_ROOT, OPTIONS);
+  const { summary } = runSync(UNBLOCKED_REPO, OPTIONS);
+  // 偽リポジトリには「必ず成功する probe」があるが、sync は probe を実行しないので緑のまま
   assert.match(summary, /mode: `sync`/);
+  assert.match(summary, /sync: ファイル検査のみ/);
 });
 
-function fullDeps(options = {}) {
-  return { ...probeDeps(options), github: options.github ?? fakeGitHub() };
-}
-
 test("runFull is green when every probe fails as expected", async () => {
-  const { verdict, summary } = await runFull(
-    REPO_ROOT,
-    fullDeps({ failingStep: "CI=1 yarn test" }),
-    OPTIONS,
-  );
+  const deps = fixtureDeps(BLOCKED_REPO);
+  const { verdict, summary } = await runFull(BLOCKED_REPO, deps, OPTIONS);
   assert.equal(verdict.exitCode, 0);
   assert.match(summary.split("\n")[0], /^## OK: still blocked/);
+  // フィクスチャの steps が実際に走ったこと（= 緑の根拠が本物の exit 1）を確認する
+  assert.deepEqual(
+    deps.commands.filter(([command]) => !command.startsWith(RESET_COMMAND_PREFIX)),
+    [
+      ["echo probe-start", "/"],
+      ["exit 1", "/"],
+    ],
+  );
 });
 
 test("runFull exits 10 and comments before exiting when a probe succeeds", async () => {
-  const github = fakeGitHub();
-  const { verdict } = await runFull(REPO_ROOT, fullDeps({ github }), OPTIONS);
+  const github = fixtureGitHub(UNBLOCKED_REPO_ISSUES);
+  const { verdict, summary } = await runFull(
+    UNBLOCKED_REPO,
+    fixtureDeps(UNBLOCKED_REPO, { github }),
+    OPTIONS,
+  );
   assert.equal(verdict.exitCode, 10);
+  assert.match(verdict.headline, /^UNBLOCKED: fixture-unblocked@9\.0\.0 が通りました/);
+  // 1 件が unblocked でも、同じ run の他エントリは still blocked のまま巻き込まれない
+  assert.match(summary, /fixture-still-blocked .* still blocked/);
 
   const commentIndex = github.calls.findIndex(
     ([name]) => name === "createIssueComment",
   );
   assert.notEqual(commentIndex, -1);
   // exit する前に記録が残ることを、runFull の解決前にコメントが存在することで確認する
-  assert.equal(github.calls[commentIndex][1], 146);
+  assert.equal(github.calls[commentIndex][1], 9002);
 });
 
 test("runFull exits 1 when the tracking issue is closed", async () => {
-  const github = fakeGitHub({
+  const github = fixtureGitHub(BLOCKED_REPO_ISSUES, {
     issues: new Map([
-      [146, { number: 146, state: "closed", labels: ["dependabot-ignore"] }],
+      [9001, { number: 9001, state: "closed", labels: ["dependabot-ignore"] }],
     ]),
     labeled: [],
   });
-  const { verdict } = await runFull(REPO_ROOT, fullDeps({ github }), OPTIONS);
+  const { verdict } = await runFull(
+    BLOCKED_REPO,
+    fixtureDeps(BLOCKED_REPO, { github }),
+    OPTIONS,
+  );
   assert.equal(verdict.exitCode, 1);
   assert.match(verdict.headline, /^MECHANISM: .*closed になっている/);
 });
 
 test("runFull exits 1 when the tracking issue has no label", async () => {
-  const github = fakeGitHub({
-    issues: new Map([[146, openIssue(146, [])]]),
+  const github = fixtureGitHub(BLOCKED_REPO_ISSUES, {
+    issues: new Map([[9001, openIssue(9001, [])]]),
     labeled: [],
   });
-  const { verdict } = await runFull(REPO_ROOT, fullDeps({ github }), OPTIONS);
+  const { verdict } = await runFull(
+    BLOCKED_REPO,
+    fixtureDeps(BLOCKED_REPO, { github }),
+    OPTIONS,
+  );
   assert.equal(verdict.exitCode, 1);
   assert.match(verdict.headline, /dependabot-ignore ラベルが付いていない/);
 });
 
 test("runFull exits 1 when a labeled open issue is missing from the ledger", async () => {
-  const github = fakeGitHub({ labeled: [146, 999] });
-  const { verdict } = await runFull(REPO_ROOT, fullDeps({ github }), OPTIONS);
+  const github = fixtureGitHub(BLOCKED_REPO_ISSUES, { labeled: [9001, 9999] });
+  const { verdict } = await runFull(
+    BLOCKED_REPO,
+    fixtureDeps(BLOCKED_REPO, { github }),
+    OPTIONS,
+  );
   assert.equal(verdict.exitCode, 1);
-  assert.match(verdict.headline, /#999 が台帳にない/);
+  assert.match(verdict.headline, /#9999 が台帳にない/);
 });
 
 test("runFull does not run probes while the mechanism is broken", async () => {
-  const github = fakeGitHub({ labeled: [146, 999] });
-  const deps = fullDeps({ github });
-  await runFull(REPO_ROOT, deps, OPTIONS);
+  const github = fixtureGitHub(BLOCKED_REPO_ISSUES, { labeled: [9001, 9999] });
+  const deps = fixtureDeps(BLOCKED_REPO, { github });
+  await runFull(BLOCKED_REPO, deps, OPTIONS);
   assert.deepEqual(deps.commands, []);
   assert.equal(
     github.calls.filter(([name]) => name === "createIssueComment").length,
     0,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 番人（guard）
+//
+// ここから下の 1 本だけは、フィクスチャではなく**本物**の
+// scripts/ci/dependabot-unblock.json と .github/dependabot.yml を読む。
+//
+// これは評価器のふるまいの検証ではない。「台帳と dependabot.yml のずれ」を
+// ローカルの node --test で早期に捕まえるための番人である。
+// エントリを足しても外しても、両方を正しく更新していればこのテストは通る。
+// 片方だけ触ったときに落ちるのが正しい振る舞いであり、そのときの直し方は
+// 落ちたこのテストの名前がそのまま示している（評価器を疑う必要はない）。
+//
+// today を固定しているのは、見直し期限のデッドマンスイッチをここで発火させないため。
+// 期限超過の検知は週次ジョブの実行時刻の today で行う（checkReviewDeadlines のテストも別途ある）。
+// ---------------------------------------------------------------------------
+
+test("GUARD: the repository's own ledger and dependabot.yml are in sync (not a behavior test)", () => {
+  const { verdict } = runSync(REPO_ROOT, OPTIONS);
+  assert.equal(
+    verdict.kind,
+    "OK",
+    `${verdict.headline}\n` +
+      "scripts/ci/dependabot-unblock.json と .github/dependabot.yml の片方だけを更新している。" +
+      "評価器のふるまいの問題ではないので、両方を揃えて直すこと。",
   );
 });

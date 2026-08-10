@@ -1,0 +1,20 @@
+[
+  {
+    "directory": "/",
+    "dependency-name": "fixture-still-blocked",
+    "probe": true,
+    "spec": "fixture-still-blocked@9",
+    "steps": ["echo probe-start", "exit 1"],
+    "review-by": "2099-01-01",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/9001"
+  },
+  {
+    "directory": "/",
+    "dependency-name": "fixture-unblocked",
+    "probe": true,
+    "spec": "fixture-unblocked@9",
+    "steps": ["echo probe-start", "exit 0"],
+    "review-by": "2099-01-01",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/9002"
+  }
+]
