@@ -91,5 +91,19 @@ no-op ペア workflow 方式での required 昇格を再検討する。
 - `.github/workflows/` の CI ガードレールは、他リポジトリから `@v1` 参照される reusable workflows を兼ねる（[ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）。job name や inputs の変更は本リポジトリの required status checks だけでなく消費側リポジトリの check run 名にも影響するため、破壊的変更は major タグ（`v2`）として扱う
 - `Toolchain Version Check`（`.github/workflows/toolchain-version-check.yml`、[ADR 0014](../adr/0014-terraform-toolchain-version-standardization.md)）は
   新規追加のガードレールのため、現時点では required status checks に追加しない。
-  昇格するかは、`.mise.toml` と CI pin の運用が定着してから別途判断する
+  昇格するかは、`.mise.toml` と CI pin の運用が定着してから別途判断する。
+  昇格する際に指定する check run 名は次のとおり（2026-08-10 に `gh pr checks` で実測）。
+
+  | リポジトリ | check run 名 |
+  | --- | --- |
+  | idp-golden-path（本リポジトリ） | `Toolchain Version Check` |
+  | terraform-hannibal | `toolchain-version-check / Toolchain Version Check` |
+  | ticket-c2c-platform | `toolchain-version-check / Toolchain Version Check` |
+
+  本リポジトリでは dual-trigger の `pull_request` 側として自分自身の workflow が直接走るため、
+  caller job 名のプレフィックスが付かず job の `name` そのものになる。
+  消費側は薄い caller workflow 経由で呼ぶため、`<caller の job id> / <callee の job name>` の合成名になる
+  （caller job に `name:` を付けず job id にフォールバックさせる規約。[ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) 追記 2026-07-13）。
+  同じ workflow でも本リポジトリと消費側で名前が違うため、消費側の branch protection に本リポジトリの名前をそのまま写すと
+  存在しない check を required に指定することになる
 - 一時的に保護を外す操作（`gh api -X DELETE .../protection`）は、必ずユーザーの明示的な許可を得てから行う

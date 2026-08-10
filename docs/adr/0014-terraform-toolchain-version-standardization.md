@@ -137,6 +137,25 @@ ADR 0023 は別リポジトリの ADR であるため、本 ADR が supersede �
 
 - skeleton に `.mise.toml`（node のみ宣言。Terraform を使うときの標準値はコメントで案内）と caller workflow を追加した。新規生成リポジトリにのみ影響し、既存の生成済みリポジトリには影響しない
 
+## 検証
+
+検査そのものが機能していることは、3 リポジトリに意図的な drift を仕込んだ使い捨ての Draft PR で実測した（2026-08-10）。
+一致検査は対象ファイルを 1 件も拾えていなくても導入 PR では緑になるため、
+「落ちるべきときに落ちる」ことを確認しなければ検知手段として成立しない。
+
+実測で確認できたこと。
+
+- `.mise.toml` 側 / workflow の pin 側の**両方向**の drift を、3 リポジトリすべてで検出する
+- 検出漏れゼロ（列挙数が事前に grep した pin の実在数と一致。ticket-c2c-platform では 9 件）
+- 誤検知ゼロ（`terraform_version: ${{ env.TERRAFORM_VERSION }}` のような間接参照行を pin とみなさない）
+- caller 経由でも配布元自身と同じ判定・同じメッセージになる
+
+実 CI では未確認のまま残っているのは、`.mise.toml` 不在時の fail と TOML 解析失敗時の fail の 2 経路である
+（ローカルのフィクスチャ検証のみ）。
+
+run ID・仕込んだ drift・出力されたメッセージの実例は
+[検証記録 2026-08-10](../operations/verification/2026-08-10-toolchain-version-check/README.md) に残す。
+
 ## 再検討条件
 
 - **Terraform の新しいメジャーバージョンが出た場合**（2.x など）。state 互換性・provider 互換性・CI の setup アクション対応状況を確認し、統一先バージョンを更新するかを判断する

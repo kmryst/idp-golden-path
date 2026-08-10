@@ -1,7 +1,8 @@
 # CI 品質ゲート トラブルシューティング
 
-PR の required status check（`PR Policy Check` / `Commitlint` / `Markdown Lint` / `Gitleaks Secret Scan`）まわりで、
-実装バグではなく **GitHub Actions の concurrency 挙動**が原因でマージがブロックされた事象と、その恒久対応を記録する。
+CI 品質ゲートまわりで、実装バグではなく **GitHub Actions / `gh` CLI 側の挙動**が原因で
+マージがブロックされたり調査が進まなくなったりした事象と、その対応を記録する。
+reusable workflow 構成に固有の運用ハマりどころを集約する場所として使う。
 
 これらの check は [ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) の
 reusable workflow として本リポジトリを正本にし、Scaffolder skeleton・terraform-hannibal・ticket-c2c-platform が
@@ -59,8 +60,63 @@ idp-golden-path / terraform-hannibal / ticket-c2c-platform の同一構成 3 リ
 | CANCELLED | 0 |
 | required check の恒久ブロック | なし（すべて FIFO で SUCCESS に解決） |
 
+## 事象: caller 経由の run では `gh run view --log` がログ本文を返さない
+
+### 症状
+
+消費側リポジトリ（terraform-hannibal / ticket-c2c-platform）の run に対して
+`gh run view <run-id> --log` を実行しても、**何も出力されない**（終了コードは 0 で、標準出力が空）。
+`--log-failed` も同様に空になる。失敗した run の原因が分からず、エラーメッセージが読めない。
+
+本リポジトリ自身の run（dual-trigger の `pull_request` 側）では同じコマンドが正常にログを返すため、
+コマンドの使い方の誤りだと気付きにくい。
+
+### 根本原因
+
+`gh run view --log` は run 単位のログ zip をダウンロードして整形するが、
+caller 経由の run に対してはこの取得が空になる（下記の実測）。
+何が空を返しているのか（GitHub API 側がログを持たないのか、`gh` が caller の run にログ zip を
+見つけられないのか）までは切り分けていない。**運用上必要なのは代替手段であり、切り分けは行っていない。**
+
+一方で、annotation は caller の run に紐づく check run から取得できる。
+検査系ジョブの検出内容は `::error::` で annotation に載るため、ログ zip が空でも内容は読める。
+
+### 対応: ANNOTATIONS を読む
+
+reusable workflow の検査系ジョブ（`Toolchain Version Check` 等）は、
+検出内容を `::error::` で出力して GitHub の annotation に載せている。
+annotation は run のサマリから取得できるため、ログ zip が空でも内容を読める。
+
+```bash
+# 1. run のサマリを見る。末尾の ANNOTATIONS 節に検出内容がすべて出る
+gh run view <run-id> -R kmryst/<repo>
+
+# 2. 機械処理したい場合は job ID を取って annotations API を叩く
+#    job ID は上の出力の "JOBS" 節に (ID nnnnnnnn) として出ている
+gh api repos/kmryst/<repo>/check-runs/<job-id>/annotations --jq '.[].message'
+```
+
+`gh run view <run-id>` の JOBS 節には step 単位の成否も出るため、
+どの step で落ちたかの特定にはこれで足りる。ログ本文が必要な場合は Web UI を開く。
+
+### 検証結果
+
+2026-08-10 に Toolchain Version Check のネガティブテストを実施した際、3 リポジトリで実測した。
+
+| 対象 run | `--log` の出力行数 |
+| --- | --- |
+| idp-golden-path 31399408516（本リポジトリ自身、caller なし） | 330 |
+| terraform-hannibal 31398931474（caller 経由） | 0 |
+
+caller 経由の run でも `gh run view <run-id>` の ANNOTATIONS 節、および
+`gh api repos/kmryst/terraform-hannibal/check-runs/93490341767/annotations` は
+検出メッセージを完全に返した。詳細は
+[Toolchain Version Check ネガティブテスト 検証記録](./verification/2026-08-10-toolchain-version-check/README.md) を参照。
+
 ## 関連
 
 - [ADR 0008. CI ガードレールを reusable workflows として提供し、タグ固定（`@v1`）で参照する](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)
 - Issue #87 / PR #88（`queue: max` 追加。正本 + skeleton caller の 2 ファイル）
+- Issue #179（caller 経由のログ取得手順の記録）
+- [Toolchain Version Check ネガティブテスト 検証記録 2026-08-10](./verification/2026-08-10-toolchain-version-check/README.md)
 - [GitHub Docs: Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/using-jobs/using-concurrency)
