@@ -114,6 +114,36 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 - probe の子プロセスには `GITHUB_TOKEN` / `GH_TOKEN` / `NODE_AUTH_TOKEN` / `NPM_TOKEN` を渡しません。
   未検証の新メジャーとその推移依存を実行する仕組みであるためです
 
+### probe の実行環境と `steps` に書いてはいけないもの
+
+probe は**素の `ubuntu-latest`** で走ります。
+
+- service container はありません（PostgreSQL / Valkey / Redis / OpenSearch などは起動していない）
+- secrets は渡しません（上記のトークン類を含む）
+- 外部サービスへの接続を前提にできません
+
+したがって `steps` には、**外部サービスへの接続を必要とするコマンドを入れてはいけません。**
+
+入れると、上流が対応して実際には解除できるようになっても probe は環境要因で失敗し続け、
+`OK: still blocked` の緑が出たままになります。**永久に検知できない**という、
+`probe: false` を選ぶべき状況を `probe: true` のまま踏むのと同じ誤りです。
+しかも失敗し続けている限り緑なので、壊れていることに誰も気づきません。
+
+実例（ticket-c2c-platform の `/` の typescript）:
+
+- 同リポジトリの `npm test` は jest で `src/**/*.spec.ts` を全部走らせ、その中に
+  実 PostgreSQL / Valkey / OpenSearch へ接続する spec が含まれる。
+  CI（`pr-check.yml`）では service container 付きで実行している
+- そのため `steps` は `npm install --no-audit --no-fund typescript@7` と `npm run build` の 2 つに留め、
+  `npm test` は入れていない
+- probe の役割は「解除できるようになったか」の**検知**であって、アップグレードの完全な検証ではありません。
+  この ignore のブロッカーは `ts-jest` の peer 範囲であり、それは `npm install` が正確に検出します。
+  型の非互換は `npm run build`（tsc）が拾います
+- テストの最終確認は**解除 PR の CI** が担います（「`UNBLOCKED`（赤 exit 10）が出たときの手順」の 4）
+
+`steps` を書くときは「このコマンドは、ネットワーク上の npm レジストリ以外に何かへ接続するか」を確認してください。
+接続するなら、そのコマンドを外すか、外部サービスに触れない範囲へ絞ります。
+
 ## `dependabot.yml` コメントの正典書式
 
 評価器は `dependabot.yml` を行ベースで抽出します（外部依存ゼロ規約のため full YAML パーサは使いません）。
@@ -195,6 +225,10 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 「上流に何かが起きれば状況が変わるか」で切り分けてください。
 
 `probe: false` でも**台帳への記載は必須**です（検査2 の 1:1 対応を成立させるため）。
+
+`probe: true` にしたら、`steps` に外部サービス接続を必要とするコマンドが混ざっていないかを必ず確認してください。
+混ざっていると `probe: false` にすべき状況と同じ誤報になります。
+判断基準は「[probe の実行環境と `steps` に書いてはいけないもの](#probe-の実行環境と-steps-に書いてはいけないもの)」節を参照してください。
 
 ### 4. ローカルで `sync` を実行し、緑を確認する
 
@@ -279,11 +313,25 @@ concurrency:
 
 jobs:
   dependency-unblock-check:
-    uses: kmryst/idp-golden-path/.github/workflows/dependency-unblock-check.yml@v1
+    uses: kmryst/idp-golden-path/.github/workflows/dependency-unblock-check.yml@v1.5.0
 ```
+
+### caller の tag pin 方針
+
+**新規に足す caller は、`@v1.5.0` のような具体バージョンで pin します。** 可動タグ `@v1` は使いません。
+
+`@v1` は本リポジトリのリリースのたびに付け替わるため、消費側は提供側の変更を無審査で受け取ることになります。
+実際、`v1` を v1.4.0 から v1.5.0 へ付け替えた際、新規 workflow の追加だけのつもりが
+`markdown-lint.yml` / `pr-commitlint.yml` の `actions/setup-node@v6 → v7` と
+`dependency-audit.yml` の入力追加も同時に流入しており、消費側 CI の事後確認が必要になりました。
+具体バージョンで pin してあれば、取り込みのタイミングを消費側が選べます
+（更新は Dependabot の `github-actions` エコシステムが PR で提案します）。
+
+既存の `@v1` 参照を書き換える作業は、この方針の対象外です（別途まとめて判断します）。
 
 導入時のチェックリスト:
 
+- [ ] `uses:` が具体バージョン（`@v1.x.y`）で pin されている
 - [ ] `pull_request` / `pull_request_target` を**張っていない**（セキュリティ契約。ADR-0013。callee 側でも拒否するので、張ると即 fail する）
 - [ ] concurrency group が callee と別名になっている
 - [ ] `permissions` に `issues: write` がある（記録コメントの投稿に必要）
