@@ -53,6 +53,10 @@ ignore を足す / 外すときは両方を同一 PR で更新すれば通りま
 朗報を赤にしているのは、新しい通知インフラを足さずに人へ確実に届く唯一の経路が
 GitHub Actions の失敗通知だからです。上流対応は数か月に一度なので、この赤は稀です。
 
+**上流を待っているあいだ、人間がすることはありません。** 週次ジョブが見張っていて、
+解除できるようになったら赤（`UNBLOCKED`）で知らせます。定期的に手で上流を確認する運用は不要です。
+唯一の例外が `review-by` の見直し期限で、そこまでに解除できなければ検査5 が赤になり、CI が棚卸しを強制します。
+
 ## 赤（MECHANISM）の理由と対処
 
 | 検査 | Summary の文言 | 何が起きたか | 対処 |
@@ -141,6 +145,73 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 - ignore を解除するときは、`dependabot.yml` の ignore・台帳エントリ・追跡 Issue の close を**同一 PR**で行う
 - ラベルだけ外して Issue を OPEN のまま残さない（検査4 が空振りする）
 
+## ignore を追加する手順
+
+新しく Dependabot の `ignore` を足すときは、次の順序で行います。
+**1 を最初にやること**が最も重要です。追跡 Issue の番号が決まらないと、
+2 の `# 追跡: Issue #NNN` コメントも 3 の `tracking` URL も書けず、
+先に 2 / 3 を書くと必ず番号を後から埋め直すことになるためです。
+
+### 1. 追跡 Issue を起票し、`dependabot-ignore` ラベルを付ける
+
+- 各リポジトリの Issue 運用（`CONTRIBUTING.md`）に従って起票する
+- 起票したその場で `dependabot-ignore` ラベルを付ける（付け忘れは検査3 で赤）
+- 1 つの ignore につき 1 つの追跡 Issue を対応させる。
+  ただし同一の解除条件を共有する複数ディレクトリの ignore は 1 Issue を共有してよい
+  （台帳の `tracking` 重複は正常。「台帳スキーマ」節を参照）
+
+**この Issue はここで close しません。** ignore が `dependabot.yml` に残っているあいだは OPEN のままにします
+（close すると検査1 で赤になります）。close するのは ignore を外す PR です。
+
+### 2. `.github/dependabot.yml` に ignore と 7 項目コメントを追加する
+
+書式は「[`dependabot.yml` コメントの正典書式](#dependabotyml-コメントの正典書式)」節に厳密に従います。
+
+- `update-types: ["version-update:semver-major"]` 形式で書く。`versions:` の範囲指定は規約外で、書くと赤になる
+- `ignore:` はブロックシーケンスで書く（flow style は赤）
+- 直前のコメントブロックに `見直し期限: YYYY-MM-DD` と `追跡: Issue #NNN` を**各 1 行ちょうど**含める。
+  0 行でも 2 行以上でも赤になる
+- 見直し期限は 3 リポジトリの棚卸し時期に揃える。この 2 行は検査2 が**値まで**台帳と照合するので、
+  あとで台帳に転記するときに 1 文字も変えない
+
+コメント本文には、なぜ ignore するのか・実測根拠・本番影響・解除条件を書きます（7 項目コメント）。
+解除条件は、次のステップで `probe` にするかどうかの判断材料そのものです。
+
+### 3. 台帳 `scripts/ci/dependabot-unblock.json` にエントリを追加する
+
+キーの意味は「[台帳スキーマ](#台帳スキーマ)」節を参照してください。
+`directory` / `dependency-name` / `review-by` / `tracking` の 4 つは
+`dependabot.yml` 側と完全一致させます（検査2 が照合します）。
+
+`probe` の使い分けは、2 で書いた解除条件で決めます。
+
+| 解除条件 | `probe` | 追加で書くもの |
+| --- | --- | --- |
+| 上流のリリース待ち（新メジャーが出れば通るようになる） | `true` | `spec`（メジャー固定）と `steps` |
+| 自リポジトリ側の作業待ち・方針由来（移行が終わるまで通らない） | `false` | `probe-skip-reason` |
+
+自リポジトリ側の作業待ちを `probe: true` にすると、試しても**永久に失敗**し続け、
+「まだブロックされている」という誤った緑を出し続けます。判断に迷う場合は
+「上流に何かが起きれば状況が変わるか」で切り分けてください。
+
+`probe: false` でも**台帳への記載は必須**です（検査2 の 1:1 対応を成立させるため）。
+
+### 4. ローカルで `sync` を実行し、緑を確認する
+
+コマンドは「[ローカルでの実行](#ローカルでの実行)」節を参照してください。
+`sync` はネットワークもコマンド実行も伴わないファイル検査だけなので、数秒で終わります。
+
+ここで落ちるのは、ほぼ 2 と 3 の書式・値の不一致です。
+週次ジョブや PR CI を待たずにこの場で直します。
+
+### 5. 2〜4 を同一 PR でマージする
+
+`dependabot.yml` と台帳は**必ず同じ PR** に入れます。
+片方だけをマージすると、その時点から週次ジョブが検査2 で `MECHANISM` 赤になります。
+
+1 で起票した追跡 Issue は、この PR では close しません。
+PR 本文では `Refs #NNN` を使い、`Closes` は使わないでください。
+
 ## `UNBLOCKED`（赤 exit 10）が出たときの手順
 
 1. Job Summary の probe 表と、追跡 Issue に自動投稿された記録コメントを読む
@@ -156,7 +227,9 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 
 ```bash
 # ファイル検査のみ（ネットワークなし・コマンド実行なし）
-node scripts/ci/dependabot-unblock-check.mjs sync
+# sync でも GITHUB_REPOSITORY は必要（台帳の tracking URL が同一リポジトリを指すかの検査に使う）
+GITHUB_REPOSITORY=kmryst/idp-golden-path \
+  node scripts/ci/dependabot-unblock-check.mjs sync
 
 # 追跡 Issue の検査 + probe まで（GITHUB_TOKEN / GITHUB_REPOSITORY が必要）
 GITHUB_REPOSITORY=kmryst/idp-golden-path GITHUB_TOKEN="$(gh auth token)" \
@@ -165,6 +238,19 @@ GITHUB_REPOSITORY=kmryst/idp-golden-path GITHUB_TOKEN="$(gh auth token)" \
 # 単体テスト
 node --test scripts/ci/dependabot-unblock-check.test.mjs
 ```
+
+消費側リポジトリの台帳を、マージ前にローカルで検査することもできます。
+評価器は本リポジトリにしかないので、検査対象は `GITHUB_WORKSPACE` で指定します
+（CI 上で消費側の checkout を指すのと同じ仕組みです）。パス引数は取りません。
+
+```bash
+GITHUB_WORKSPACE=/path/to/consumer-repo \
+GITHUB_REPOSITORY=kmryst/<consumer-repo> \
+  node /path/to/idp-golden-path/scripts/ci/dependabot-unblock-check.mjs sync
+```
+
+台帳を既定（`scripts/ci/dependabot-unblock.json`）以外の場所に置いている場合は、
+`ledger-path` input と同じ相対パスを `UNBLOCK_LEDGER_PATH` で渡します。
 
 `full` は `backstage/` の `package.json` / `yarn.lock` / `node_modules` を書き換えます。
 ローカルで試す場合は作業ツリーを汚さないよう、`git worktree` などの使い捨てチェックアウトで実行してください。
