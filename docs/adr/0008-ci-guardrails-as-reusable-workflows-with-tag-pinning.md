@@ -256,6 +256,113 @@ npm 側の期限付き例外機構（追記 2026-07-28）は yarn パスに適�
 - Issue: [kmryst/idp-golden-path#133](https://github.com/kmryst/idp-golden-path/issues/133)
 - 例外の追跡: [kmryst/idp-golden-path#134](https://github.com/kmryst/idp-golden-path/issues/134)
 
+## 追記（2026-08-11）: コンテナイメージと IaC 設定の Trivy スキャンを共通ガードレールに追加する
+
+`npm audit` / Dependabot alerts が原理的に見られない 2 つの領域を埋めるため、
+`trivy-image.yml`（コンテナイメージの中身）と `trivy-config.yml`（IaC / Dockerfile の設定不備）を追加した。
+
+3 リポジトリで Trivy の運用が分散していた（terraform-hannibal は週次 Security Scan の container scan と
+PR の Trivy Config Scan、ticket-c2c-platform は `trivy fs`）ため、共通部分を本リポジトリの
+reusable workflow に寄せる。npm 依存の CVE は既に `npm audit`（blocking、全依存区分 include）と
+Dependabot alerts が見ているため、`trivy fs` は共通ガードレールに含めない。
+
+### 2 本に分ける理由
+
+単一の `trivy.yml` にせず 2 ファイルに分ける。
+
+- 実行コストが桁違いで、適切なトリガーが変わる。image はビルドを含み 1〜2 分、config は数秒
+  （本リポジトリの clean tree で 0.9 秒、ticket-c2c-platform で 4.5 秒を実測）
+- 必要な permissions が違う。image は SARIF 送信のため `security-events: write` を要求するが、
+  config は当面 `contents: read` のみで足りる。reusable workflow の job が要求する permission は
+  caller の付与範囲を超えられないため、両者を 1 ファイルにすると config だけ使いたい消費側にも
+  `security-events: write` の付与を強いることになる
+- 呼び出し回数が違う。image は backend / frontend で 2 回、config はリポジトリごとに 1 回
+
+### `trivy-image.yml` は dual-trigger にしない（本 ADR の作法からの逸脱）
+
+他の共通ガードレールは `pull_request` + `workflow_call` の dual-trigger で本リポジトリの CI を兼ねるが、
+`trivy-image.yml` は **`workflow_call` 専用**とする。本リポジトリの Dockerfile
+（`backstage/packages/backend/Dockerfile`）はビルド前にホスト側で `yarn install --immutable` /
+`yarn tsc` / `yarn build:backend` を実行しておく必要があり（Dockerfile 冒頭に明記）、
+「checkout してそのまま `docker build` する」という素の手順に乗らないためである。
+dual-trigger にするには本リポジトリ専用のビルド前処理を reusable workflow 側へ持ち込むか、
+消費側に不要な inputs を足すことになり、共通化の趣旨に反する。
+
+逸脱の代償は「本リポジトリで 1 度も実行されないまま消費側に配布される」ことである。
+これを埋めるため、`trivy-image-selftest.yml`（薄い caller）と最小フィクスチャ
+`scripts/ci/fixtures/trivy-image/{primary,secondary}/Dockerfile` を恒久資産として置き、
+`uses: ./.github/workflows/trivy-image.yml` のローカル参照で自リポジトリの CI から実行する。
+フィクスチャは `FROM` 1 行のみで、ベースイメージ由来の finding が必ず出るため
+「0 件だから緑」と「検出できていないから緑」を区別できる。
+selftest は `trivy-image.yml` 本体・caller・フィクスチャを触った PR でだけ走らせる（paths filter）。
+required status check にはしないため、paths filter による check 欠落の問題は起きない。
+
+`trivy-config.yml` は本リポジトリ自身も `terraform/` を持ち、素の checkout だけで検査が成立するため、
+規約どおり dual-trigger とする。
+
+### exit-code の既定を `'0'`（非 blocking）にする
+
+両 workflow とも `exit-code` の既定は `'0'` とし、finding があっても job を fail させない。
+
+- image: ticket-c2c-platform の実測（Trivy 0.70.0、`CRITICAL,HIGH`）で 29 件が検出され、
+  そのうち **22 件が修正不能**（affected 16 / fix_deferred 5 / will_not_fix 1）だった。
+  `exit-code: 1` にすると base image を最新にしても恒久的に fail する。
+  常時 fail するゲートは alert fatigue により検知能力を失う（追記 2026-08-05 で実測済みの失敗パターン）
+- config: ticket-c2c-platform で 41 件（CRITICAL 10 / HIGH 31）、本リポジトリで 10 件（CRITICAL 3 / HIGH 7）が
+  いずれも未棚卸しであり、accepted risk 候補を含む
+
+blocking 化（`exit-code: '1'` / required status check 昇格）は、finding の分類と
+accepted risk / ignore 理由の記録を終えてから**別 Issue で判断する**。
+これは terraform-hannibal ADR-0012 が `Trivy Config Scan` に対して採った段階的アプローチと同じである。
+`exit-code` は input として提供するので、棚卸しの済んだ消費側は caller の 1 行変更で blocking 化できる。
+
+### SARIF の扱いを image と config で変える
+
+- image は SARIF を Security > Code scanning alerts へ送る（`upload-sarif`、既定 true）
+- config は**初期は SARIF を上げず** Step Summary + artifact に留める（terraform-hannibal の `trivy-config` と同型）。
+  未棚卸しの数十件を Security タブへ流すと既存の CodeQL alert が埋もれるため
+
+同一リポジトリから複数の SARIF を上げる場合、`github/codeql-action/upload-sarif` の `category` を
+分けないと後の upload が前を上書きし、先に上げた側の alert が消える。
+そのため `trivy-image.yml` は `category: trivy-image-<image-name>` を強制し、
+`image-name` を必須 input にしている。既存の Trivy fs は単一アップロードだったためこの問題が顕在化していなかった。
+category を意図的に衝突させたときに片方の alert が実際に消えることは、selftest の
+`same-category` オプションを使ったネガティブテストで実測している
+（検証記録: `docs/operations/verification/2026-08-11-trivy-reusable-workflows/`）。
+
+また `trivy-action` は SARIF 出力時、`limit-severities-for-sarif` を指定しないと
+`severity` 指定を無視して全 severity を Security タブへ送る（v0.36.0 の `entrypoint.sh` が
+`TRIVY_SEVERITY` を unset する）。Step Summary の集計と Security タブの件数を一致させるため、
+`limit-severities-for-sarif: true` を指定する。
+
+### `trivy-config.yml` に `scanners` input を持たせない
+
+terraform-hannibal の既存 job は `scanners: misconfig` を渡しているが、これは実測上 no-op である。
+`trivy-action` は入力を CLI フラグではなく `TRIVY_*` 環境変数として渡し、`trivy config` サブコマンドは
+`--scanners` フラグを持たないため `TRIVY_SCANNERS` を束縛しない（不正な値を渡してもエラーにならないことを
+Trivy 0.70.0 で実測）。効かない input を契約に残すと「切り替えられる」という誤解を生むため提供しない。
+
+### 消費側とリリースへの影響
+
+- 新規 workflow の追加であり、既存 workflow の job name・inputs・check run 名は変えないため、
+  非破壊的な `v1.x.y` リリースとして扱う
+- `trivy-image.yml` の caller は job に `security-events: write` を必ず付与すること。
+  `upload-sarif: false` で呼ぶ場合も、callee の job 定義自体が要求するため付与が必要である
+  （付与しないと job が 1 つも起動せず run 全体が失敗する）
+- `trivy-image.yml` は workflow レベルの concurrency を持たない。同一 caller から複数イメージを
+  並行 scan するのが通常の使い方であり、callee 側に group を置くと相互キャンセルするため。
+  直列化が必要な場合は caller 側で `-caller` サフィックス付きの group を持つ
+- `trivy-config.yml` は dual-trigger のため、本リポジトリでは `Trivy Config Scan` という
+  check run が全 PR に増える。required status checks には追加しない
+- ticket-c2c-platform / terraform-hannibal 側の caller 実装と既存 Trivy job の整理は、
+  本 PR のマージと `v1` タグ更新の後に各リポジトリの Issue / PR で行う
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#181](https://github.com/kmryst/idp-golden-path/issues/181)
+- terraform-hannibal ADR-0012（IaC security scan を Trivy Config に集約し、blocking gate 化は finding 棚卸し後に別 Issue とする前例）
+- 検証記録: [2026-08-11 Trivy reusable workflows](../operations/verification/2026-08-11-trivy-reusable-workflows/README.md)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)

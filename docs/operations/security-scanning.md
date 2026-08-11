@@ -12,12 +12,23 @@ required status checks との関係は [branch-protection.md](./branch-protectio
 | [Gitleaks Secret Scan](../../.github/workflows/security-scan.yml) | git 履歴への secret / credential 混入 | PR | fail（required status check） |
 | [Dependency Audit](../../.github/workflows/dependency-audit.yml) | `backstage/` と reusable workflow 消費側の依存関係にある既知脆弱性（CVE） | PR / 週次（月曜 09:00 JST）/ 手動 | high 以上で fail、moderate 以下は警告のみ |
 | [CodeQL](../../.github/workflows/codeql.yml) | コード起因の脆弱性（SAST） | PR / main push / 週次（月曜 09:00 JST） | Security > Code scanning alerts に集約（CI は解析失敗時のみ fail） |
+| [Trivy Image Scan](../../.github/workflows/trivy-image.yml) | コンテナイメージの中身（ベースイメージ由来の OS パッケージ・ランタイム同梱ライブラリ）の既知脆弱性 | 消費側の caller 次第（`workflow_call` 専用） | 既定は非 blocking。Security > Code scanning alerts と Step Summary に集約 |
+| [Trivy Config Scan](../../.github/workflows/trivy-config.yml) | IaC（Terraform）と Dockerfile の設定不備（misconfiguration） | PR | 既定は非 blocking。Step Summary + artifact |
 
-3 つのスキャンは検出レイヤーが異なり、相互に代替できません。
+5 つのスキャンは検出レイヤーが異なり、相互に代替できません。
 
 - **Gitleaks**: 「自分が書いたもの」に秘密情報が混入していないか（コミット内容の検査）
 - **Dependency Audit**: 「他人が書いたもの（依存パッケージ）」に既知の脆弱性がないか（サプライチェーンの検査）
 - **CodeQL**: 「自分が書いたもの」に脆弱なコードパターンがないか（静的解析）
+- **Trivy Image Scan**: 「アプリを載せる土台」に既知の脆弱性がないか（実行イメージの検査）
+- **Trivy Config Scan**: 「まだ動いていない設定ファイル」の書き方が危険でないか（IaC の検査）
+
+Dependency Audit と Trivy Image Scan は特に混同しやすいですが、対象が重なりません。
+Dependency Audit（および Dependabot alerts）はアプリの lockfile が宣言する依存しか見ないため、
+ベースイメージの OS パッケージや、Node 公式イメージ同梱の npm 自身の依存
+（`/usr/local/lib/node_modules/npm/node_modules/` 配下）は原理的に対象外です。
+ticket-c2c-platform の実測では、image scan の 29 件（`CRITICAL,HIGH`）はすべてベースイメージ由来で、
+うち 7 件がこの npm 同梱依存でした。
 
 なお Dependabot version updates（`.github/dependabot.yml`）は「新しいバージョンが出たら更新 PR を作る」仕組みであり、
 既知脆弱性（CVE）の検出・警告は Dependency Audit が担います。
@@ -166,13 +177,134 @@ warn ではなく fail とする）。検出されたら resolutions の該当�
 3. false positive の場合: alert を Dismiss し、理由（False positive / Used in tests / Won't fix）を必ず選択する
 4. alert の存在自体は PR をブロックしない（後述）。critical / high の alert は Issue を起票して追跡する
 
+## Trivy Image Scan
+
+コンテナイメージをビルドして（`docker build` のみ。push はしない）、その中身を Trivy でスキャンします。
+設計判断は [ADR 0008 追記 2026-08-11](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) を参照してください。
+
+**本リポジトリの `pull_request` では起動しません。** `workflow_call` 専用です。
+本リポジトリの Dockerfile はビルド前にホスト側で `yarn install --immutable` / `yarn tsc` / `yarn build:backend`
+を実行しておく必要があり、素の「checkout → docker build」に乗らないためです。
+その代わり、reusable workflow 自身の回帰は
+[Trivy Image Scan Selftest](../../.github/workflows/trivy-image-selftest.yml) が検知します
+（最小フィクスチャ `scripts/ci/fixtures/trivy-image/{primary,secondary}/Dockerfile` をビルドして scan する薄い caller。
+`trivy-image.yml` 本体・caller・フィクスチャを触った PR でのみ実行）。
+
+### inputs
+
+| input | 必須 | 既定 | 用途 |
+| --- | --- | --- | --- |
+| `image-name` | **はい** | — | ローカルタグ名兼 SARIF category の識別子（例: `backend` / `frontend`）。`^[a-z0-9][a-z0-9._-]*$` |
+| `docker-context` | いいえ | `.` | build context |
+| `dockerfile` | いいえ | `<docker-context>/Dockerfile` | Dockerfile のリポジトリルートからの相対パス |
+| `severity` | いいえ | `CRITICAL,HIGH` | 検出対象 severity |
+| `exit-code` | いいえ | `'0'` | `'1'` にすると finding 検出時に job を fail させる |
+| `upload-sarif` | いいえ | `true` | SARIF を Security > Code scanning alerts へ送るか |
+| `trivy-version` | いいえ | `v0.70.0` | 使用する Trivy のバージョン |
+
+### 消費側からの呼び出し方
+
+```yaml
+jobs:
+  # caller job には name: を付けない（check 名は `backend / Trivy Image Scan` になる）
+  backend:
+    permissions:
+      contents: read
+      # upload-sarif: false で呼ぶ場合も必須。付与しないと run 全体が失敗する
+      security-events: write
+    uses: kmryst/idp-golden-path/.github/workflows/trivy-image.yml@v1
+    with:
+      image-name: backend
+      dockerfile: Dockerfile
+
+  frontend:
+    permissions:
+      contents: read
+      security-events: write
+    uses: kmryst/idp-golden-path/.github/workflows/trivy-image.yml@v1
+    with:
+      # backend と同じ値にすると SARIF の category が衝突し、片方の alert が消える
+      image-name: frontend
+      dockerfile: frontend/Dockerfile
+```
+
+- **`image-name` はイメージごとに必ず変えます。** SARIF は `category: trivy-image-<image-name>` で
+  アップロードされ、category が同じだと後の upload が前を上書きして先に上げた側の alert が消えます
+- caller 側の `concurrency` group には `-caller` サフィックスを付けます。
+  `trivy-image.yml` 自身は workflow レベルの concurrency を持ちません
+  （複数イメージの並行 scan が通常の使い方であり、callee 側に group を置くと相互キャンセルするため）
+
+### 検出時の対応フロー
+
+1. Step Summary で件数・severity 内訳・修正版の有無を確認する（`修正版なし` の件数が重要）
+2. 修正版がある finding は、ベースイメージの更新（`FROM` の tag / digest 更新）で解消する。
+   アプリ依存に起因する場合は Dependency Audit のフローに合流する
+3. 修正版がない finding（`affected` / `fix_deferred` / `will_not_fix`）は、ベースイメージを最新にしても消えない。
+   代替ベースイメージ（distroless 等）への移行を検討する材料として扱い、個別の追跡はしない
+4. critical / high が新規に増えた場合は Issue を起票して追跡する
+
+## Trivy Config Scan
+
+Terraform / Dockerfile などの設定不備を review signal として検出します（`trivy config`）。
+本リポジトリでは PR ごとに実行し、他リポジトリからは `workflow_call` で呼び出します（dual-trigger）。
+
+### inputs
+
+| input | 必須 | 既定 | 用途 |
+| --- | --- | --- | --- |
+| `scan-ref` | いいえ | `.` | スキャン対象のリポジトリ相対パス |
+| `severity` | いいえ | `HIGH,CRITICAL` | 検出対象 severity |
+| `exit-code` | いいえ | `'0'` | `'1'` にすると finding 検出時に job を fail させる |
+| `skip-dirs` | いいえ | （除外なし） | 走査から除外するディレクトリのカンマ区切りリスト |
+
+`scanners` input は提供しません。`trivy config` サブコマンドは `--scanners` を持たず、
+`trivy-action` が渡す `TRIVY_SCANNERS` を束縛しないため、指定しても no-op だからです（実測）。
+
+### 消費側からの呼び出し方
+
+```yaml
+jobs:
+  trivy-config:
+    permissions:
+      contents: read
+    uses: kmryst/idp-golden-path/.github/workflows/trivy-config.yml@v1
+    with:
+      skip-dirs: docs/worklogs,client/dist
+```
+
+caller 側の `concurrency` group は `trivy-config-caller-<PR番号>` のように callee と区別します。
+
+### 検出時の対応フロー
+
+1. Step Summary のルール別集計で、件数の多いルール（同じ指摘の横展開）から見る
+2. 設定として直せるものは Terraform / Dockerfile を修正する
+3. 意図して受容するもの（例: 検証環境で WAF を無効にしている）は accepted risk として ADR / 運用ドキュメントに記録する
+4. 分類が済むまでは非 blocking のまま運用する
+
+## exit-code 方針（blocking 化を保留している理由）
+
+Trivy Image Scan / Trivy Config Scan はどちらも既定 `exit-code: '0'` の **非 blocking** です。
+
+- image: 検出の大半が修正不能である。ticket-c2c-platform の実測では 29 件中 22 件が
+  `affected` / `fix_deferred` / `will_not_fix` で、`exit-code: 1` にするとベースイメージを最新にしても
+  恒久的に fail する。常時 fail するゲートは alert fatigue で検知能力を失う
+- config: finding が未棚卸しで accepted risk 候補を含む（本リポジトリで 10 件、ticket-c2c-platform で 41 件）
+
+blocking 化（`exit-code: '1'` / required status check 昇格）は、finding の分類と accepted risk の記録を
+終えてから別 Issue で判断します。`exit-code` は input なので、棚卸しの済んだ消費側は caller の 1 行変更で切り替えられます。
+
 ## required status checks との関係
 
-現時点では Dependency Audit / CodeQL を required status checks に**昇格させません**
+現時点では Dependency Audit / CodeQL / Trivy Config Scan / Trivy Image Scan Selftest を
+required status checks に**昇格させません**
 （[branch-protection.md](./branch-protection.md) の required checks は従来どおり）。
 
 - Dependency Audit の fail 要因（新規公開 CVE）は PR の変更内容と無関係に発生するため、
   required にすると無関係な PR が突然マージ不能になる。まず非 required で運用し、検出頻度を見てから昇格を判断する
 - CodeQL は alert 集約型で、PR ブロックには branch protection 側の Code scanning 設定が別途必要。こちらも運用実績を見てから判断する
+- Trivy Config Scan は既定が非 blocking（`exit-code: '0'`）で、finding が未棚卸しのため昇格させない
+- Trivy Image Scan Selftest は paths filter 付きで実行されるため、required にすると
+  filter に一致しない PR で check run が作成されず、required check が永久に pending になる
+  （`Backstage CI` と同じ理由。[branch-protection.md](./branch-protection.md) 参照）
 
 昇格する場合は別 Issue で扱い、`branch-protection.md` の設定変更と同じ PR でこのドキュメントを更新します。
