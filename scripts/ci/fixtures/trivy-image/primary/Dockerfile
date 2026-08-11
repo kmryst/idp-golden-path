@@ -16,3 +16,7 @@
 FROM node:24-slim
 
 CMD ["node", "--version"]
+
+# Trivy Config Scan（本リポジトリの PR チェック）が DS-0002 "Image user should not be root"
+# を検出しないよう、フィクスチャ自身も非 root で終える。
+USER node
