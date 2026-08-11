@@ -73,7 +73,7 @@ jobs:
     with:
       image-name: selftest-primary
       docker-context: scripts/ci/fixtures/trivy-image/primary
-      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] }}
+      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
       exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}
 
   secondary:
@@ -85,5 +85,5 @@ jobs:
       # same-category を true にすると primary と同じ識別子になり、SARIF が上書きされる
       image-name: ${{ (github.event_name == 'workflow_dispatch' && inputs['same-category'] && 'selftest-primary') || 'selftest-secondary' }}
       docker-context: scripts/ci/fixtures/trivy-image/secondary
-      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] }}
+      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
       exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}
