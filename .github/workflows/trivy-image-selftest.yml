@@ -1,0 +1,89 @@
+# Trivy Image Scan Selftest
+# 目的: workflow_call 専用の trivy-image.yml を、本リポジトリ自身で実行して回帰を検知する
+#
+# 他の共通ガードレールは dual-trigger（pull_request + workflow_call）で本リポジトリの
+# CI を兼ねるが、trivy-image.yml はビルド前提の都合で dual-trigger にできない
+# （理由は trivy-image.yml のヘッダと ADR-0008 追記 2026-08-11）。
+# 呼び出す caller がなければ本リポジトリでは 1 度も実行されず、
+# 壊れても消費側リポジトリで初めて発覚することになる。それを避けるための薄い caller である。
+#
+# `uses: ./.github/workflows/trivy-image.yml` はローカル参照で、caller と同じ ref の
+# 定義を呼ぶ。したがって PR ブランチ上の変更がそのまま検証される（@v1 を経由しない）。
+#
+# 実行契機:
+#   - pull_request: trivy-image.yml 本体・この caller・フィクスチャを触った PR のみ（paths filter）。
+#     全 PR で 2 イメージをビルドするコストを払う必要はなく、
+#     required status check ではないため paths filter による check 欠落の問題も起きない
+#   - workflow_dispatch: inputs を変えた手動検証用（SARIF アップロードや exit-code=1 の実測）
+#
+# 【SARIF の扱い】pull_request 実行では SARIF を上げない。フィクスチャはアプリの実像ではなく、
+# その finding を Security > Code scanning alerts に常時流すとノイズになるため。
+# category 分離の検証など、意図して Security タブへ送る場合だけ workflow_dispatch の
+# `upload-sarif` を true にする。
+
+name: Trivy Image Scan Selftest
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/trivy-image.yml"
+      - ".github/workflows/trivy-image-selftest.yml"
+      - "scripts/ci/fixtures/trivy-image/**"
+  workflow_dispatch:
+    inputs:
+      upload-sarif:
+        description: "SARIF を Security > Code scanning alerts へ送るか"
+        required: false
+        type: boolean
+        default: false
+      exit-code:
+        description: "finding 検出時に fail させるか（1 で fail）"
+        required: false
+        type: choice
+        options:
+          - "0"
+          - "1"
+        default: "0"
+      same-category:
+        description: >-
+          ネガティブテスト用。true にすると 2 つのイメージが同じ image-name を使い、
+          SARIF の category が衝突して後勝ちで上書きされることを実証する
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # callee 側（trivy-image.yml）は concurrency group を持たないが、
+  # 規約どおり caller 側には -caller サフィックスを付ける
+  group: trivy-image-selftest-caller-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # caller job には name: を付けず job id にフォールバックさせる（ADR-0008 追記 2026-07-13）。
+  # check 名は `primary / Trivy Image Scan` になる
+  primary:
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/trivy-image.yml
+    with:
+      image-name: selftest-primary
+      docker-context: scripts/ci/fixtures/trivy-image/primary
+      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
+      exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}
+
+  secondary:
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/trivy-image.yml
+    with:
+      # same-category を true にすると primary と同じ識別子になり、SARIF が上書きされる
+      image-name: ${{ (github.event_name == 'workflow_dispatch' && inputs['same-category'] && 'selftest-primary') || 'selftest-secondary' }}
+      docker-context: scripts/ci/fixtures/trivy-image/secondary
+      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
+      exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}

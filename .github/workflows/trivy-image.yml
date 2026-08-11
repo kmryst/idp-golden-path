@@ -1,0 +1,258 @@
+# Trivy Image Scan
+# 目的: コンテナイメージの中身（ベースイメージ由来の OS パッケージと、
+#       ベースイメージに同梱された言語ランタイムのライブラリ）の既知脆弱性を検出する
+#       正本: docs/operations/security-scanning.md、設計判断: ADR-0008 追記
+#
+# npm audit / Dependabot alerts はアプリの lockfile が宣言する依存しか見ない。
+# ベースイメージの OS パッケージや、Node 公式イメージ同梱の npm 自身の依存
+# （/usr/local/lib/node_modules/npm/node_modules/ 配下）は原理的に対象外であり、
+# その領域を埋めるのが本 workflow である（ADR-0008 追記 2026-08-11 の実測を参照）。
+#
+# 【dual-trigger からの逸脱】他の共通ガードレールと異なり、本 workflow は
+# `workflow_call` 専用で、本リポジトリ自身の pull_request では起動しない。
+# 本リポジトリの Dockerfile（backstage/packages/backend/Dockerfile）は
+# ビルド前にホスト側で `yarn install --immutable` / `yarn tsc` / `yarn build:backend`
+# を実行しておく必要があり、「checkout してそのまま docker build する」という
+# 素の手順に乗らないためである。逸脱の詳細と、本リポジトリでの検証手段
+# （trivy-image-selftest.yml）は ADR-0008 追記 2026-08-11 に記載する。
+#
+# 【permissions 契約】caller は job に `security-events: write` を必ず付与すること。
+# reusable workflow の job が要求する permission は caller の付与範囲を超えられず、
+# 超えた場合は job が 1 つも起動せずに run 全体が失敗する。
+# `upload-sarif: false` で呼ぶ場合も、この job 定義自体が要求するため付与が必要。
+#
+# 【concurrency 契約】本 workflow は workflow レベルの concurrency を持たない。
+# 同一 caller から backend / frontend など複数イメージを並行 scan するのが
+# 通常の使い方であり、callee 側で group を持つと相互にキャンセルし合うため。
+# 直列化が必要な場合は caller 側で `<name>-caller-<PR番号>` 形式の group を持つこと
+# （caller/callee で同一 group 名を使うとデッドロックする。ADR-0008 追記 2026-07-13 / Issue #106）。
+
+name: Trivy Image Scan
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: >-
+          スキャン対象イメージの識別子（例: backend / frontend）。
+          ローカルタグ名と SARIF の category に使う。
+          同一リポジトリから複数イメージを scan する場合は必ず別の値にすること。
+          同じ値にすると後の SARIF が前の SARIF を上書きし、片方の結果が消える。
+          使える文字は英小文字・数字・`.`・`_`・`-` で、先頭は英小文字か数字
+        required: true
+        type: string
+      docker-context:
+        description: "docker build のビルドコンテキスト。未指定時は `.`"
+        required: false
+        type: string
+      dockerfile:
+        description: >-
+          Dockerfile のリポジトリルートからの相対パス。
+          未指定時は `<docker-context>/Dockerfile`
+        required: false
+        type: string
+      severity:
+        description: "検出対象の severity（カンマ区切り）。未指定時は `CRITICAL,HIGH`"
+        required: false
+        type: string
+      exit-code:
+        description: >-
+          finding があったときの job の扱い。`0`（既定）は非 blocking で
+          Step Summary と SARIF による可視化のみ、`1` は job を fail させる。
+          既定を `0` にしている理由は ADR-0008 追記 2026-08-11 を参照
+        required: false
+        type: string
+      upload-sarif:
+        description: >-
+          検出結果を SARIF として Security > Code scanning alerts へ送るか。未指定時は true
+        required: false
+        type: boolean
+      trivy-version:
+        description: "使用する Trivy のバージョン。未指定時は v0.70.0"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  trivy-image:
+    name: Trivy Image Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # SARIF を Security > Code scanning alerts へ送るために必要。
+      # caller 側でも同じ permission を付与しておくこと（上部の permissions 契約を参照）
+      security-events: write
+    # イメージのビルドを含むため既定より長く取る
+    timeout-minutes: 30
+    steps:
+      # image-name はローカルタグ名・ファイル名・SARIF category に展開されるため、
+      # 想定外の文字が来たらビルド前に落とす
+      - name: Validate inputs
+        env:
+          IMAGE_NAME: ${{ inputs['image-name'] }}
+          EXIT_CODE: ${{ inputs['exit-code'] || '0' }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo "::error::image-name must match ^[a-z0-9][a-z0-9._-]*$ (got: $IMAGE_NAME)"
+            exit 1
+          fi
+
+          case "$EXIT_CODE" in
+            0 | 1) ;;
+            *)
+              echo "::error::exit-code must be '0' or '1' (got: $EXIT_CODE)"
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.2.0
+
+      # load: true でローカル daemon にイメージを読み込む。docker push はしない。
+      # cache-from/to: type=gha により、同一リポジトリの前回ビルドのレイヤーを再利用する
+      - name: Build image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: ${{ inputs['docker-context'] || '.' }}
+          file: ${{ inputs.dockerfile || format('{0}/Dockerfile', inputs['docker-context'] || '.') }}
+          tags: trivy-image-scan-${{ inputs['image-name'] }}:${{ github.sha }}
+          load: true
+          push: false
+          cache-from: type=gha,scope=trivy-image-${{ inputs['image-name'] }}
+          cache-to: type=gha,mode=max,scope=trivy-image-${{ inputs['image-name'] }}
+
+      # exit-code の判定は最終 step にまとめる。ここで落とすと Step Summary も
+      # SARIF アップロードも実行されず、「落ちた理由」が残らないため常に 0 で通す
+      - name: Scan image (json)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: trivy-image-scan-${{ inputs['image-name'] }}:${{ github.sha }}
+          format: json
+          output: trivy-image-${{ inputs['image-name'] }}.json
+          severity: ${{ inputs.severity || 'CRITICAL,HIGH' }}
+          exit-code: "0"
+          hide-progress: true
+          version: ${{ inputs['trivy-version'] || 'v0.70.0' }}
+
+      # limit-severities-for-sarif を付けないと、trivy-action は SARIF 出力時に
+      # severity 指定を無視して全 severity を Security タブへ送る。
+      # json 側の集計と Security タブの件数を一致させるため明示的に絞る
+      - name: Scan image (sarif)
+        if: ${{ inputs['upload-sarif'] != false }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: trivy-image-scan-${{ inputs['image-name'] }}:${{ github.sha }}
+          format: sarif
+          output: trivy-image-${{ inputs['image-name'] }}.sarif
+          severity: ${{ inputs.severity || 'CRITICAL,HIGH' }}
+          limit-severities-for-sarif: true
+          exit-code: "0"
+          hide-progress: true
+          version: ${{ inputs['trivy-version'] || 'v0.70.0' }}
+
+      # 同一リポジトリから複数の SARIF を上げる場合、category を分けないと
+      # 後の upload が前を上書きし、先に上げた側の alert が消える。
+      # image-name をそのまま category に使うのはこのため（Issue #181 で実測）
+      - name: Upload SARIF to code scanning
+        if: ${{ inputs['upload-sarif'] != false }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image-${{ inputs['image-name'] }}.sarif
+          category: trivy-image-${{ inputs['image-name'] }}
+
+      - name: Publish Trivy image summary
+        if: always()
+        env:
+          IMAGE_NAME: ${{ inputs['image-name'] }}
+          SEVERITY: ${{ inputs.severity || 'CRITICAL,HIGH' }}
+          EXIT_CODE: ${{ inputs['exit-code'] || '0' }}
+        run: |
+          set -euo pipefail
+          report="trivy-image-${IMAGE_NAME}.json"
+
+          {
+            echo "## Trivy Image Scan (${IMAGE_NAME})"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ! -s "$report" ]]; then
+            echo "Trivy の JSON 出力が生成されませんでした。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          total=$(jq '[.Results[]?.Vulnerabilities[]?] | length' "$report")
+          fixable=$(jq '[.Results[]?.Vulnerabilities[]? | select((.FixedVersion // "") != "")] | length' "$report")
+          unfixable=$((total - fixable))
+
+          {
+            echo "- 対象 severity: \`${SEVERITY}\`"
+            echo "- 検出件数: **${total}** 件（修正版あり ${fixable} 件 / 修正版なし ${unfixable} 件）"
+            echo "- exit-code: \`${EXIT_CODE}\`（\`0\` は非 blocking。ADR-0008 追記 2026-08-11）"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$total" -gt 0 ]]; then
+            {
+              echo "| severity | 件数 |"
+              echo "|---|---|"
+              jq -r '[.Results[]?.Vulnerabilities[]?]
+                     | group_by(.Severity)
+                     | sort_by(-length)
+                     | .[]
+                     | "| \(.[0].Severity) | \(length) |"' "$report"
+              echo ""
+              echo "<details><summary>検出一覧（最大 100 件）</summary>"
+              echo ""
+              echo "| ID | パッケージ | 現在 | 修正版 | severity | 状態 |"
+              echo "|---|---|---|---|---|---|"
+              jq -r '[.Results[]?.Vulnerabilities[]?]
+                     | .[0:100][]
+                     | "| \(.VulnerabilityID) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "-") | \(.Severity) | \(.Status // "-") |"' "$report"
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "対象 severity の脆弱性は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "TRIVY_IMAGE_TOTAL=${total}" >> "$GITHUB_ENV"
+
+      - name: Upload Trivy image report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-image-${{ inputs['image-name'] }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: trivy-image-${{ inputs['image-name'] }}.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce exit code
+        if: always()
+        env:
+          EXIT_CODE: ${{ inputs['exit-code'] || '0' }}
+          TOTAL: ${{ env.TRIVY_IMAGE_TOTAL }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EXIT_CODE" != "1" ]]; then
+            echo "exit-code=0: reporting only (${TOTAL:-0} findings)"
+            exit 0
+          fi
+
+          if [[ "${TOTAL:-0}" -gt 0 ]]; then
+            echo "::error::Trivy image scan found ${TOTAL} vulnerabilities (exit-code=1)"
+            exit 1
+          fi
+
+          echo "exit-code=1: no findings"

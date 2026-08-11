@@ -1,0 +1,209 @@
+# Trivy Config Scan
+# 目的: IaC（Terraform）と Dockerfile の設定不備（misconfiguration）を review signal として検出する
+#       正本: docs/operations/security-scanning.md、設計判断: ADR-0008 追記
+#
+# 検出レイヤーは Trivy Image Scan と重ならない。
+# Trivy Image Scan は「ビルド済みイメージの中身にある既知脆弱性（CVE）」を見るのに対し、
+# 本 workflow は「まだ動いていない設定ファイルの書き方」を見る。
+#
+# 【scanners input を持たない理由】terraform-hannibal の既存 job は `scanners: misconfig` を
+# 渡しているが、これは実測上 no-op である。trivy-action は入力を CLI フラグではなく `TRIVY_*`
+# 環境変数として渡し、`trivy config` サブコマンドは `--scanners` フラグを持たないため
+# `TRIVY_SCANNERS` を束縛せず、不正な値を渡してもエラーにならない（Trivy 0.70.0 で実測）。
+# 効かない input を契約に残すと「切り替えられる」という誤解を生むので提供しない。
+# misconfig 以外の検査（secret / vuln）が必要な場合は `trivy config` ではなく別 scan-type の
+# workflow を追加する。
+#
+# このファイルは本リポジトリの PR チェックであると同時に、他リポジトリから
+# `uses: kmryst/idp-golden-path/.github/workflows/trivy-config.yml@v1` で呼び出す
+# reusable workflow でもある（dual-trigger 方式・バージョニング方針は ADR-0008）
+#
+# 【初期ロールアウトの方針】既定は `exit-code: '0'`（非 blocking）で、SARIF も Security タブへ送らない。
+# 未棚卸しの finding を Security タブへ流すと既存の CodeQL alert が埋もれるため、
+# 初期は Step Summary と artifact による可視化に留める。
+# blocking gate 化（`exit-code: '1'` / required status check 昇格）と SARIF 連携は、
+# finding の分類と accepted risk の記録を終えてから別 Issue で判断する
+# （terraform-hannibal ADR-0012 と同じ段階的アプローチ。ADR-0008 追記 2026-08-11）。
+#
+# 【concurrency 契約】消費側リポジトリの caller workflow は、この group と同一の文字列を使ってはならない。
+# GitHub Actions は workflow_call 経由でも caller/callee 双方の concurrency group を
+# 評価するため、同一名にすると「caller と callee 間のデッドロック」と判定され、
+# job が1つも起動せず run がキャンセルされる（ADR-0008 追記 2026-07-13 / Issue #106）。
+# caller 側は `trivy-config-caller-<PR番号>` のように区別すること。
+
+name: Trivy Config Scan
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      scan-ref:
+        description: "スキャン対象のリポジトリ相対パス。未指定時は `.`"
+        required: false
+        type: string
+      severity:
+        description: "検出対象の severity（カンマ区切り）。未指定時は `HIGH,CRITICAL`"
+        required: false
+        type: string
+      exit-code:
+        description: >-
+          finding があったときの job の扱い。`0`（既定）は非 blocking で可視化のみ、
+          `1` は job を fail させる。既定を `0` にしている理由は ADR-0008 追記 2026-08-11 を参照
+        required: false
+        type: string
+      skip-dirs:
+        description: >-
+          走査から除外するディレクトリのカンマ区切りリスト。未指定時は除外しない。
+          生成物・ベンダリングされたコードなど、リポジトリが管理していない設定ファイルを外す用途
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trivy-config-${{ github.event.pull_request.number || github.run_id }}
+  # 実行中 run のキャンセルは CANCELLED check run を commit に残し、
+  # required status checks の判定に混入し得るため cancel しない
+  cancel-in-progress: false
+
+jobs:
+  trivy-config:
+    name: Trivy Config Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate inputs
+        env:
+          EXIT_CODE: ${{ inputs['exit-code'] || '0' }}
+          SCAN_REF: ${{ inputs['scan-ref'] }}
+        run: |
+          set -euo pipefail
+
+          case "$EXIT_CODE" in
+            0 | 1) ;;
+            *)
+              echo "::error::exit-code must be '0' or '1' (got: $EXIT_CODE)"
+              exit 1
+              ;;
+          esac
+
+          if [[ -n "$SCAN_REF" ]]; then
+            case "$SCAN_REF" in
+              /* | *..*)
+                echo "::error::scan-ref must be a relative path without .."
+                exit 1
+                ;;
+            esac
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # exit-code の判定は最終 step にまとめる。ここで落とすと Step Summary も
+      # artifact も残らず、「何が検出されて落ちたか」を後から追えないため常に 0 で通す
+      - name: Run Trivy config scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ${{ inputs['scan-ref'] || '.' }}
+          severity: ${{ inputs.severity || 'HIGH,CRITICAL' }}
+          skip-dirs: ${{ inputs['skip-dirs'] || '' }}
+          format: json
+          output: trivy-config.json
+          exit-code: "0"
+          hide-progress: true
+
+      - name: Publish Trivy config summary
+        if: always()
+        env:
+          SEVERITY: ${{ inputs.severity || 'HIGH,CRITICAL' }}
+          EXIT_CODE: ${{ inputs['exit-code'] || '0' }}
+          SCAN_REF: ${{ inputs['scan-ref'] || '.' }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "## Trivy Config Scan"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ! -s trivy-config.json ]]; then
+            echo "Trivy の JSON 出力が生成されませんでした。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          total=$(jq '[.Results[]?.Misconfigurations[]?] | length' trivy-config.json)
+
+          {
+            echo "- 対象: \`${SCAN_REF}\` / severity \`${SEVERITY}\` / scanner misconfig"
+            echo "- 検出件数: **${total}** 件"
+            echo "- exit-code: \`${EXIT_CODE}\`（\`0\` は review signal。blocking gate 化は finding 棚卸し後に別 Issue）"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$total" -gt 0 ]]; then
+            {
+              echo "| severity | 件数 |"
+              echo "|---|---|"
+              jq -r '[.Results[]?.Misconfigurations[]?]
+                     | group_by(.Severity)
+                     | sort_by(-length)
+                     | .[]
+                     | "| \(.[0].Severity) | \(length) |"' trivy-config.json
+              echo ""
+              echo "| ルール | 件数 |"
+              echo "|---|---|"
+              jq -r '[.Results[]?.Misconfigurations[]?]
+                     | group_by(.ID)
+                     | sort_by(-length)
+                     | .[0:20][]
+                     | "| \(.[0].ID) \(.[0].Title) | \(length) |"' trivy-config.json
+              echo ""
+              echo "<details><summary>検出一覧（最大 100 件）</summary>"
+              echo ""
+              echo "| ファイル | ルール | severity | 内容 |"
+              echo "|---|---|---|---|"
+              jq -r '[.Results[]? as $r | ($r.Misconfigurations[]? | {file: $r.Target, m: .})]
+                     | .[0:100][]
+                     | "| \(.file) | \(.m.ID) | \(.m.Severity) | \(.m.Title) |"' trivy-config.json
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "対象 severity の misconfiguration は検出されませんでした。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "TRIVY_CONFIG_TOTAL=${total}" >> "$GITHUB_ENV"
+
+      - name: Upload Trivy config report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-config-${{ github.event.pull_request.number || github.run_id }}-${{ github.run_attempt }}
+          path: trivy-config.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce exit code
+        if: always()
+        env:
+          EXIT_CODE: ${{ inputs['exit-code'] || '0' }}
+          TOTAL: ${{ env.TRIVY_CONFIG_TOTAL }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EXIT_CODE" != "1" ]]; then
+            echo "exit-code=0: reporting only (${TOTAL:-0} findings)"
+            exit 0
+          fi
+
+          if [[ "${TOTAL:-0}" -gt 0 ]]; then
+            echo "::error::Trivy config scan found ${TOTAL} misconfigurations (exit-code=1)"
+            exit 1
+          fi
+
+          echo "exit-code=1: no findings"
