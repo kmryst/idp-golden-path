@@ -202,6 +202,12 @@ warn ではなく fail とする）。検出されたら resolutions の該当�
 | `upload-sarif` | いいえ | `true` | SARIF を Security > Code scanning alerts へ送るか |
 | `trivy-version` | いいえ | `v0.70.0` | 使用する Trivy のバージョン |
 
+`upload-sarif` は省略して呼ぶのが標準の使い方です。SARIF を上げたくない場合だけ明示的に `false` を渡します。
+この既定値は `trivy-image.yml` の input 宣言（`default: true`）が正本で、
+宣言漏れは selftest の `Workflow Input Contract` job が全 PR で検査します
+（宣言が無いと boolean input は未指定時に `false` に評価され、SARIF が黙って上がらなくなります。
+実際に発生した事象と対策は ADR-0008 追記 2026-08-12 を参照）。
+
 ### 消費側からの呼び出し方
 
 ```yaml

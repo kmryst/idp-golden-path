@@ -20,6 +20,16 @@
 # その finding を Security > Code scanning alerts に常時流すとノイズになるため。
 # category 分離の検証など、意図して Security タブへ送る場合だけ workflow_dispatch の
 # `upload-sarif` を true にする。
+#
+# 【input 省略経路の検知】既存の primary / secondary は `upload-sarif` を式で必ず明示するため、
+# 「caller が渡さなかったとき」の経路を 1 度も通らない。この穴を突いて、`upload-sarif` に
+# `default: true` が無いまま SARIF が黙って上がらなくなる回帰が消費側まで流出した（Issue #186）。
+# 以後、次の 2 段で守る。
+#   - contract job: 全 PR（この workflow の paths filter 内）で静的に `default:` 宣言漏れを検査する。
+#     docker build を伴わないので安価であり、dispatch を待たずに回帰を落とせる
+#   - default-upload-sarif job: `upload-sarif` を意図的に**省略**して呼び、既定値 true が実際に
+#     効いて SARIF が上がることを実行時に実証する。フィクスチャ由来 alert を常時流さないよう
+#     workflow_dispatch で `upload-sarif: true` を選んだときだけ動かす
 
 name: Trivy Image Scan Selftest
 
@@ -28,8 +38,11 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/trivy-image.yml"
+      - ".github/workflows/trivy-config.yml"
       - ".github/workflows/trivy-image-selftest.yml"
       - "scripts/ci/fixtures/trivy-image/**"
+      - "scripts/ci/workflow-input-contract.mjs"
+      - "scripts/ci/workflow-input-contract.test.mjs"
   workflow_dispatch:
     inputs:
       upload-sarif:
@@ -63,6 +76,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # workflow_call の boolean input が `default:` を宣言しているかを静的に検査する。
+  # docker build を伴わないため全 PR で回せる（実行時の検証は default-upload-sarif job が担う）
+  contract:
+    name: Workflow Input Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # trivy 系に限らずリポジトリ内の全 workflow を対象にする。
+      # 検査は静的解析だけで完結し、対象を絞る理由がない
+      - name: Check workflow_call boolean input defaults
+        run: node scripts/ci/workflow-input-contract.mjs .github/workflows/*.yml
+
+      - name: Run contract checker unit tests
+        run: npm run test:workflow-input-contract
+
   # caller job には name: を付けず job id にフォールバックさせる（ADR-0008 追記 2026-07-13）。
   # check 名は `primary / Trivy Image Scan` になる
   primary:
@@ -86,4 +119,28 @@ jobs:
       image-name: ${{ (github.event_name == 'workflow_dispatch' && inputs['same-category'] && 'selftest-primary') || 'selftest-secondary' }}
       docker-context: scripts/ci/fixtures/trivy-image/secondary
       upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
+      exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}
+
+  # `upload-sarif` を渡さずに呼ぶ経路の実行時検証（Issue #186 の回帰テスト）。
+  # 上の 2 job は式で必ず値を明示するため、この経路を通らない。
+  #
+  # 期待する挙動: callee の `default: true` が効き、`Scan image (sarif)` と
+  # `Upload SARIF to code scanning` の両 step が実行されて category
+  # `trivy-image-selftest-default-sarif` の alert が現れる。
+  # `default:` が失われると 2 step が skip され、この job は success のままになるので、
+  # 判定は job の conclusion ではなく **step が skipped でないこと** で行う。
+  #
+  # 実行条件を workflow_dispatch かつ upload-sarif=true に絞るのは、
+  # フィクスチャ由来の finding を Security タブへ常時流さないため（上部「SARIF の扱い」）。
+  # 宣言漏れ自体は contract job が全 PR で検知する。
+  default-upload-sarif:
+    if: github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/trivy-image.yml
+    with:
+      image-name: selftest-default-sarif
+      docker-context: scripts/ci/fixtures/trivy-image/primary
+      # upload-sarif は意図的に指定しない。ここに値を書くとテストの意味が失われる
       exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}

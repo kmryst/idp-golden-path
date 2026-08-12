@@ -363,6 +363,77 @@ Trivy 0.70.0 で実測）。効かない input を契約に残すと「切り替
 - terraform-hannibal ADR-0012（IaC security scan を Trivy Config に集約し、blocking gate 化は finding 棚卸し後に別 Issue とする前例）
 - 検証記録: [2026-08-11 Trivy reusable workflows](../operations/verification/2026-08-11-trivy-reusable-workflows/README.md)
 
+## 追記（2026-08-12）: `workflow_call` の boolean input には `default:` を必ず宣言する
+
+### 何が起きたか
+
+追記 2026-08-11 で `trivy-image.yml` の `upload-sarif` を「既定 true」と決め、
+`docs/operations/security-scanning.md` の inputs 表にもそう書いたが、
+**workflow 定義に `default: true` を宣言していなかった。**
+
+`workflow_call` の `type: boolean` input は、caller が値を渡さず定義側に `default:` も無い場合、
+`inputs.<name>` が `false` に評価される。string input で慣用の
+`inputs.severity || 'CRITICAL,HIGH'` 方式（未指定なら空文字なのでフォールバックが効く）とは異なり、
+boolean は「未指定」と「明示的な false」を式の側で区別できない。
+
+結果、`if: ${{ inputs['upload-sarif'] != false }}` が偽になり、
+`Scan image (sarif)` と `Upload SARIF to code scanning` が skip された。
+**skip されても job は success** なので、ticket-c2c-platform の
+[run 31567906354](https://github.com/kmryst/ticket-c2c-platform/actions/runs/31567906354) では
+backend / frontend の両 job が緑のまま SARIF を 1 件も上げていなかった。
+
+これは「壊れたことが分かる失敗」ではなく「守っているつもりで守っていない」silent failure であり、
+セキュリティガードレールとしては最も避けたい失敗モードである。
+
+### なぜ selftest で検知できなかったか
+
+`trivy-image-selftest.yml` の primary / secondary は、いずれも `upload-sarif` を
+`${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}` という式で
+**必ず明示**して呼んでいた。この式は常に `true` / `false` のどちらかに評価されるため、
+「caller が input を省略する」という、消費側で最も普通の呼び方が 1 度も実行されていなかった。
+
+reusable workflow の selftest は「動く経路」だけでなく
+**「既定値に頼る経路」を明示的に持たなければ契約を守れない。**
+
+### 決定
+
+- `workflow_call` の `type: boolean` input には `default:` を必ず宣言する。
+  既定値の正本は input 宣言側に置き、`if:` の式は
+  「明示的に false を渡されたときだけ止める」役割に徹する（`!= false` を維持する）
+- 宣言漏れを機械的に検知する。二段構えにする。
+  - `scripts/ci/workflow-input-contract.mjs`: リポジトリ内の全 workflow を静的検査し、
+    `default:` の無い boolean input を fail させる。selftest の `contract` job から全 PR で実行する
+    （docker build を伴わないため安価）
+  - selftest の `default-upload-sarif` job: `upload-sarif` を**渡さずに**呼び、
+    既定値が実際に効いて SARIF が上がることを実行時に実証する。
+    フィクスチャ由来 alert を常時流さないため `workflow_dispatch` かつ `upload-sarif: true` に限定する
+
+### 検討した代替案
+
+- **`if:` を `== true` に変える**: `default: true` があれば挙動は同じで、直しにはならない。
+  むしろ既定値が式と宣言の 2 箇所に散るため採らない
+- **消費側で常に `upload-sarif: true` を明示させる**: 宣言済みの既定値を毎回書かせる運用であり、
+  「既定 true」という契約そのものを放棄することになる。ticket-c2c-platform で一時的に採った回避策で、
+  本追記の対応後に外した
+- **YAML パーサ（js-yaml 等）を devDependency に追加する**: 検査対象は
+  `on: > workflow_call: > inputs:` ブロックだけであり、依存と Dependabot の面積を増やす価値がない。
+  インデントベースの最小走査 + `node --test` の単体テストで足りる
+
+### 影響
+
+- 全 16 workflow を精査し、`default:` の無い boolean input は `upload-sarif` の 1 件だけだった
+  （`trivy-config.yml` は boolean input を持たない。selftest の 2 つは `workflow_dispatch` input で、
+  未指定時 false でよいため対象外）
+- `trivy-image.yml` の job name / inputs / check run 名は変えていないため、消費側に非破壊。
+  `v1.7.1` として発行し `v1` を付け替える
+- ドキュメント（`security-scanning.md` の inputs 表、本 ADR 追記 2026-08-11）の記述は元から
+  「既定 true」で正しく、**実装がドキュメントに追いついた**形になる。表の修正は不要
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#186](https://github.com/kmryst/idp-golden-path/issues/186)
+- 消費側での実地検証: [kmryst/ticket-c2c-platform#474](https://github.com/kmryst/ticket-c2c-platform/pull/474)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
