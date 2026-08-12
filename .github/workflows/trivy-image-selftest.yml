@@ -109,18 +109,6 @@ jobs:
       upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
       exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}
 
-  secondary:
-    permissions:
-      contents: read
-      security-events: write
-    uses: ./.github/workflows/trivy-image.yml
-    with:
-      # same-category を true にすると primary と同じ識別子になり、SARIF が上書きされる
-      image-name: ${{ (github.event_name == 'workflow_dispatch' && inputs['same-category'] && 'selftest-primary') || 'selftest-secondary' }}
-      docker-context: scripts/ci/fixtures/trivy-image/secondary
-      upload-sarif: ${{ github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true }}
-      exit-code: ${{ (github.event_name == 'workflow_dispatch' && inputs['exit-code']) || '0' }}
-
   # `upload-sarif` を渡さずに呼ぶ経路の実行時検証（Issue #186 の回帰テスト）。
   # 上の 2 job は式で必ず値を明示するため、この経路を通らない。
   #
@@ -134,7 +122,7 @@ jobs:
   # フィクスチャ由来の finding を Security タブへ常時流さないため（上部「SARIF の扱い」）。
   # 宣言漏れ自体は contract job が全 PR で検知する。
   default-upload-sarif:
-    if: github.event_name == 'workflow_dispatch' && inputs['upload-sarif'] == true
+    # TEMPORARY(検証専用): 使い捨て PR で pull_request 契機に実行するため if: を外す
     permissions:
       contents: read
       security-events: write
