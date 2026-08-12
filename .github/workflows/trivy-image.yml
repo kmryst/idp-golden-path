@@ -67,6 +67,13 @@ on:
           検出結果を SARIF として Security > Code scanning alerts へ送るか。未指定時は true
         required: false
         type: boolean
+        # `default:` は省略できない。workflow_call の boolean input は、caller が渡さなかった場合
+        # `default` が無いと `false` に評価され、下の `if:` が偽になって SARIF 関連 step が
+        # 黙って skip される（job は success のまま = silent failure）。
+        # 実測: ticket-c2c-platform run 31567906354 で 2 job とも SARIF 0 件のまま success だった。
+        # 新しい boolean input を足すときも必ず `default:` を書くこと（selftest の
+        # `contract` job が PR 時点で宣言漏れを検知する）
+        default: true
       trivy-version:
         description: "使用する Trivy のバージョン。未指定時は v0.70.0"
         required: false
@@ -147,6 +154,11 @@ jobs:
       # limit-severities-for-sarif を付けないと、trivy-action は SARIF 出力時に
       # severity 指定を無視して全 severity を Security タブへ送る。
       # json 側の集計と Security タブの件数を一致させるため明示的に絞る
+      #
+      # 条件が `== true` ではなく `!= false` なのは意図的である。既定値は input 宣言の
+      # `default: true` が担い、この式は「明示的に false を渡されたときだけ止める」役割に徹する。
+      # 二重に既定値を持たせない（`default` を正本にする）ための書き分けであり、
+      # 双方向に効くことは selftest の `default-upload-sarif` job と workflow_dispatch で実測する
       - name: Scan image (sarif)
         if: ${{ inputs['upload-sarif'] != false }}
         uses: aquasecurity/trivy-action@v0.36.0
