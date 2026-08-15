@@ -8,10 +8,5 @@
     "id": "GHSA-xvcm-6775-5m9r",
     "expires": "2026-11-02",
     "tracking": "https://github.com/kmryst/idp-golden-path/issues/134"
-  },
-  {
-    "id": "GHSA-qwww-vcr4-c8h2",
-    "expires": "2026-11-02",
-    "tracking": "https://github.com/kmryst/idp-golden-path/issues/134"
   }
 ]
