@@ -201,6 +201,68 @@ peer 制約を**実際に踏むコマンド**（lint / test / 型チェックな
 - ignore を解除するときは、`dependabot.yml` の ignore・台帳エントリ・追跡 Issue の close を**同一 PR**で行う
 - ラベルだけ外して Issue を OPEN のまま残さない（検査4 が空振りする）
 
+## ログからの `ignore-conditions` 取得
+
+この仕組みが検査できるのは `.github/dependabot.yml` に書かれた ignore だけです。
+**`@dependabot ignore` コメントで登録された ignore は、リポジトリ内のどのファイルにも存在せず、
+`dependabot.yml` を読んでも台帳を読んでも気付けません。** GitHub 側にしか無い状態です。
+
+これを検出できる唯一の実測手段が、Dependabot Updates の run ログです。
+`Job definition:` 行の JSON に、その run に適用された `ignore-conditions` が入っています。
+
+```bash
+gh api repos/kmryst/idp-golden-path/actions/runs/<run-id>/logs > log.zip
+unzip -p log.zip 0_Dependabot.txt | grep -o '"ignore-conditions":\[[^]]*\]'
+```
+
+`update-types` を持つエントリは内部に `]` を含むため、上の `grep` は途中で切れます。
+全件を構造化して見る場合は `Job definition:` の JSON を丸ごと取り出してパースしてください。
+run の選び方と、`gh run view --log` が 0 バイトを返す罠（API を使う理由）は
+[security-scanning.md の「Dependabot の観測面」](./security-scanning.md#dependabot-の観測面)を参照します。
+
+### `source` フィールドの読み方
+
+| `source` | 意味 |
+| --- | --- |
+| `.github/dependabot.yml` | リポジトリで管理されている。この仕組みの検査対象で、監査可能 |
+| `@dependabot ignore command` | **PR コメントで登録されたもの。リポジトリ内には存在せず、設定ファイルからは辿れない** |
+
+2026-08-16 実測（idp-golden-path、run 31927306462、`/backstage` の npm_and_yarn ジョブ）:
+
+| dependency-name | version-requirement | update-types | source | updated-at |
+| --- | --- | --- | --- | --- |
+| `@types/react-dom` | `>= 19.a, < 20` | — | `@dependabot ignore command` | 2026-07-13 |
+| `jsdom` | — | `version-update:semver-major` | `.github/dependabot.yml` | 2026-08-09 |
+| `react` | `>= 19.a, < 20` | — | `@dependabot ignore command` | 2026-07-13 |
+| `react-dom` | `>= 19.a, < 20` | — | `@dependabot ignore command` | 2026-07-13 |
+| `react-router` | `>= 8.a, < 9` | — | `@dependabot ignore command` | 2026-07-13 |
+| `react-router-dom` | `>= 7.a, < 8` | — | `@dependabot ignore command` | 2026-07-13 |
+
+台帳と `dependabot.yml` に載っているのは `jsdom` の 1 件だけで、残り 5 件は
+コマンド由来のため、この仕組みからは見えていませんでした。
+
+### 注意 2 点
+
+1. **`ignore-conditions` はジョブ（`directory`）ごとにフィルタされます。**
+   その run の対象ディレクトリに関係する条件しか出ません。全量を確認するには、
+   対象エコシステムの全ジョブのログを見る必要があります
+   （実測: terraform-hannibal の `/` のジョブには 4 件出るが、`/client` のジョブには typescript 1 件しか出ない）。
+2. **抑止範囲の意味が違います。** コマンド由来の ignore は
+   `>= 19.a, < 20` のように**そのメジャー 1 つだけ**を止めます。
+   一方 `.github/dependabot.yml` の `update-types: ["version-update:semver-major"]` は**全メジャー**を止めます。
+   コマンド由来の ignore を `dependabot.yml` へ移設すると、そのままでは抑止範囲が広がります。
+
+### 3 リポジトリの実測（2026-08-16 時点）
+
+| リポジトリ | 確認した run | コマンド由来の ignore |
+| --- | --- | --- |
+| idp-golden-path | 31927306462（2026-08-16） | **5 件**（上表） |
+| terraform-hannibal | 31344100965 / 31344100649 / 31344100633（2026-08-10） | 0 件（全件 `.github/dependabot.yml`） |
+| ticket-c2c-platform | 31457050325 / 31457050287（2026-08-11） | 0 件（全件 `.github/dependabot.yml`） |
+
+**これは当該 run 時点までの観測です。** 以降に `@dependabot ignore` コメントが投稿されていても、
+次の run のログが出るまで観測できません。棚卸しのたびに最新の run で取り直してください。
+
 ## ignore を追加する手順
 
 新しく Dependabot の `ignore` を足すときは、次の順序で行います。

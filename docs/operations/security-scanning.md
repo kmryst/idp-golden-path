@@ -34,6 +34,8 @@ ticket-c2c-platform の実測では、image scan の 29 件（`CRITICAL,HIGH`）
 既知脆弱性（CVE）の検出・警告は Dependency Audit が担います。
 `.github/dependabot.yml` の `ignore`（上流の非互換で止めているメジャー更新）の解除条件を週次で実測検証する仕組みは別立てで、
 正本は [dependency-unblock-check.md](./dependency-unblock-check.md) です。
+Dependabot 自体の状態をどこから読むか（run ログ・alerts API・Dependency graph の使い分け）は
+後述の「[Dependabot の観測面](#dependabot-の観測面)」節にまとめています。
 
 ## Dependency Audit
 
@@ -163,6 +165,93 @@ warn ではなく fail とする）。検出されたら resolutions の該当�
 棚卸しを毎 PR ではなく週次にするのは、判定材料（上流のリリース）が週次でしか変わらず、
 依存グラフ全体の再解決コストを毎 PR で払う価値がないため。台帳未記載の High / Critical が
 管理対象パッケージに再出現した場合は警告に留める（実グラフの週次 audit ゲートが本監視を担う）。
+
+## Dependabot の観測面
+
+Dependabot は本リポジトリの workflow ではなく GitHub のマネージドサービスなので、
+「今どうなっているか」を見る経路が上の 5 スキャンとは別建てになります。
+経路ごとに取れる情報が違い、**どれか 1 つだけでは状況が分かりません**。
+
+| 経路 | URL / コマンド | 取れるもの | 取れないもの |
+| --- | --- | --- | --- |
+| Actions タブ | `https://github.com/kmryst/idp-golden-path/actions/workflows/dependabot/dependabot-updates`<br>`gh run list --workflow="Dependabot Updates"` | run の成功 / 失敗、対象ディレクトリとパッケージ（`displayTitle`） | 失敗理由 |
+| Dependency graph > Dependabot | `https://github.com/kmryst/idp-golden-path/network/updates` | 失敗理由（UI 上）、`Check for updates` ボタン | — |
+| Security タブ / alerts API | `https://github.com/kmryst/idp-golden-path/security/dependabot`<br>`gh api repos/kmryst/idp-golden-path/dependabot/alerts` | alert 一覧・`security_advisory.severity` / `ghsa_id`・`security_vulnerability.first_patched_version`・`dependency.manifest_path` | **「なぜ更新 PR が作れなかったか」を示すフィールドは無い** |
+
+`displayTitle` に `for <パッケージ名>` が入っている run が security update、入っていない run が version update です
+（例: `npm_and_yarn in /backstage for uuid - Update #...` は security update）。
+
+### `gh run view --log` は静かに 0 バイトを返すことがある
+
+**Dependabot Updates の run に対する `gh run view <id> --log` は、run によって 0 バイトを返します。
+しかも exit code は 0 のままで、失敗として検知できません。**
+
+2026-08-16 の実測（idp-golden-path、4 run）:
+
+| run | `gh run view --log` | exit | 種別 | conclusion |
+| --- | --- | --- | --- | --- |
+| 31927306462 | **0 bytes** | 0 | security update（`for uuid`） | failure |
+| 31929840013 | 46,280 bytes | 0 | security update（`for js-yaml`） | success |
+| 31929125387 | **0 bytes** | 0 | version update（skeleton） | success |
+| 31929125311 | 469,054 bytes | 0 | version update（`/backstage`） | failure |
+
+**発生条件は未特定です。** security / version の別でも、成功 / 失敗の別でも、実行時刻でも説明がつきません
+（31929125387 と 31929125311 はいずれも 2026-08-16 05:29 の run）。
+job / step 構成は 4 run とも同一（`Dependabot` ジョブ 1 本、step 5 つ、番号・名前まで一致）で、
+ログ zip の内部構成も同一（`0_Dependabot.txt` + `Dependabot/system.txt`）です。
+0 バイトになる run は 3 回試行しても決定的に 0 バイトで、`--job <job-id>` を指定しても 0 バイトでした。
+
+したがって、次のような書き方は**偽陰性**になるため使いません。
+
+```bash
+# NG: 「ログが取れなかった」と「該当文字列が無かった」を区別できない
+gh run view "$rid" --log | grep -q "security_update_not_possible"
+```
+
+**確実な経路は API です。** `gh api repos/<owner>/<repo>/actions/runs/<id>/logs` は
+上記 4 run すべてで HTTP 200 と実体のある zip を返しました（`0_Dependabot.txt` は 36,600 / 38,201 / 79,099 / 416,671 バイト）。
+
+```bash
+gh api repos/kmryst/idp-golden-path/actions/runs/<run-id>/logs > log.zip
+unzip -p log.zip 0_Dependabot.txt
+```
+
+### `security_update_not_possible` はログからしか読めない
+
+security update の run が失敗したとき、その理由はログ末尾の `Errors` 表に構造化されて出ます。
+alerts API には対応するフィールドがありません。
+
+```text
+INFO <job_1526721114> Requirements to unlock update_not_possible
+INFO <job_1526721114> Requirements update strategy bump_versions
++------------------------------+----------------------------------------------+
+| Type                         | Details                                      |
++------------------------------+----------------------------------------------+
+| security_update_not_possible | {                                            |
+|                              |   "dependency-name": "uuid",                 |
+|                              |   "latest-resolvable-version": "3.4.0",      |
+|                              |   "lowest-non-vulnerable-version": "14.0.0", |
+|                              |   "conflicting-dependencies": []             |
+|                              | }                                            |
++------------------------------+----------------------------------------------+
+```
+
+`latest-resolvable-version`（依存グラフ上で解決できる最新）と
+`lowest-non-vulnerable-version`（脆弱でなくなる最小）の差が、「なぜ上げられないか」を直接示します。
+上の実測（run 31927306462）では 3.4.0 と 14.0.0 の間に 10 メジャーの開きがあり、
+Dependabot 単体では手が出ないことが読み取れます。この場合は
+「Dependency Audit > 検出時の対応フロー」の 3（例外運用）か、依存元ごと更新する PR で対応します。
+
+### このログを恒常的な判定材料にしない
+
+- **ログの書式は非公式で、GitHub からの互換性の保証はありません。** 表組みも `INFO` 行の文言も
+  Dependabot の実装都合で変わり得ます。CI の合否をこの文字列一致に依存させないでください
+- **Actions のログには保持期間があり、期限を過ぎた run のログは取得できなくなります。**
+  過去に遡って集計する用途には使えません
+
+以上から、この節の手順は「詰まったときに理由を調べる調査手順」として使い、
+機械判定は [dependency-unblock-check.md](./dependency-unblock-check.md) の評価器のように
+リポジトリ内のファイルを正本とする仕組みで行います。
 
 ## CodeQL
 
