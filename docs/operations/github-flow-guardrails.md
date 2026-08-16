@@ -123,6 +123,90 @@ branch protection が要求する check を作成します。PR 作成者が `de
 job を `Success` で終了させます。caller job や called workflow の job 全体を先にスキップすると required status check が欠落するか、
 `Skipped` として表示されるため、この方式は採用しません。本リポジトリ自身の Dependabot PR でも同じ step 単位の免除判定を使います。
 
+### workflow の permissions 一覧
+
+`permissions` は各 workflow ファイルに分散して宣言されており、これまで一覧がありませんでした。
+そのため新しい workflow を書くときに「何を宣言すればよいか」を既存ファイルからの推測に頼ることになり、
+実際に Dependabot alerts を読む権限を `security-events: read` だと誤って推測する事例が発生しました
+（正しくは `vulnerability-alerts: read`。Refs #212）。推測の余地を減らすため、現在の宣言をここに集約します。
+
+以下は 2026-08-16 に `.github/workflows/*.yml` を実測した結果です（workflow レベルと job レベルの宣言の合計。
+消費側 caller workflow に必要な permissions は含みません）。
+
+| 権限 | 使っている workflow | 用途 |
+| --- | --- | --- |
+| `contents: read` | 全 16 workflow（22 箇所） | `actions/checkout` によるリポジトリの読み取り |
+| `security-events: write` | `codeql.yml` / `trivy-image.yml` / `trivy-image-selftest.yml`（5 箇所） | SARIF を Security > Code scanning alerts へアップロードする |
+| `issues: write` | `sync-labels.yml` / `issue-template-check.yml` / `dependency-unblock-check.yml` | ラベル定義の作成・付与・削除、Issue へのコメント投稿・更新 |
+| `id-token: write` | `deploy.yml` / `destroy.yml` | AWS への OIDC 認証トークンを発行する |
+| `pull-requests: read` | `pr-policy-check.yml` | `gh pr view --json labels` による PR ラベルの読み取り |
+| `actions: read` | `codeql.yml` | GitHub 公式 CodeQL starter workflow 由来 |
+| `vulnerability-alerts: read` | **未使用**（#212 が最初の使用例になる予定） | Dependabot alerts API の読み取り |
+
+`pull-requests: read` は PR ラベルの取得のみに使います。PR 本文・base/head SHA は
+`github.event.pull_request.*` から取れるため API 呼び出しを必要としません。
+
+`issues: write` の内訳は次のとおりです。`sync-labels.yml` はラベル定義の正本 `.github/labels.yml` を
+GitHub へ同期します（ラベル API は Issues 権限の配下です）。`issue-template-check.yml` は必須ラベルの
+付与・削除と検査結果コメントの投稿・更新を行います。`dependency-unblock-check.yml` は追跡 Issue の
+state / label を読み、probe 成功時に「いつ解除可能になったか」を追跡 Issue へコメントで記録します
+（正本は [dependency-unblock-check.md](./dependency-unblock-check.md)）。
+
+`actions: read` について、upstream の starter workflow のコメントは
+`# only required for workflows in private repositories` です。本リポジトリは public なので現時点では
+必須ではありませんが、削除の可否はまだ判断していません。
+
+`vulnerability-alerts: read` は本リポジトリでは**未使用であり、実際に動くかも未実測**です。
+実測は #212 で行います。この表の行は「使うならこのキー」という指針であって、動作確認済みの記録ではありません。
+
+#### `security-events` と `vulnerability-alerts` は方向が逆
+
+名前が似ていますが、データの流れる向きが逆です。
+
+- `security-events` — こちらから結果を**送り込む**（SARIF のアップロード）。だから `write` を使う
+- `vulnerability-alerts` — GitHub が持っている情報を**読み出す**。`read` と `none` しか取れず `write` は無効
+
+GitHub 公式の
+[workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+は `vulnerability-alerts` を次のように定義しています。
+
+> Read Dependabot alerts. For example, `vulnerability-alerts: read` permits an action to list Dependabot alerts for the repository. Only `read` and `none` are supported; `write` is not valid.
+
+同ページには `When write-all or read-all is used, vulnerability-alerts is automatically included as read.` とも書かれています。
+
+#### 同名の別物が 2 つある
+
+`vulnerability-alerts` という文字列は、workflow の `permissions:` キーと REST エンドポイントの
+両方に登場しますが、指すものが違います。
+
+| | 意味 | fine-grained PAT の permission |
+| --- | --- | --- |
+| workflow の `permissions:` キー `vulnerability-alerts` | Dependabot alert の**読み取り** | Dependabot alerts |
+| REST エンドポイント `/repos/{owner}/{repo}/vulnerability-alerts` | Dependabot alerts **機能の有効化・確認** | Administration |
+
+対応関係の出典は
+[fine-grained PAT の必要 permission 一覧](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
+です。後者の意味での `vulnerability-alerts` は `terraform-hannibal` の `docs/operations/action-pin-review.md` と
+`ticket-c2c-platform` の `docs/adr/0035-consolidate-dependency-cve-scanning.md` で既に使われており、
+そちらの記述は正しく修正は不要です。混同しやすいので、どちらの話をしているかを明示してください。
+
+#### 実装の経緯（未確定を含む）
+
+`vulnerability-alerts` permission は
+[`actions/runner` PR #4350](https://github.com/actions/runner/pull/4350) で追加されました
+（2026-04-15 作成 / 2026-04-21 マージ。merge commit は runner `v2.334.0` に含まれることを実測で確認）。
+同 PR の本文によれば、この permission は `AllowVulnerabilityAlertsPermission` という
+feature flag（default: false）でゲートされています。
+
+**GitHub.com 上で有効化済みかどうかは未確定です。** GA を告げる changelog は見つかっていません。
+実測は #212 で行う予定であり、この文書では断定しません。
+
+なお同 PR の本文には
+`Updated security-events description (Dependabot alerts now have their own key)` と明記されており、
+`security-events` では Dependabot alerts を読めないことが実装側から確認できます。
+実際、現在の workflow syntax ドキュメントの `security-events` の説明は
+`Work with GitHub code scanning alerts.` から始まり、Dependabot alerts に言及していません。
+
 ## 未採用案と理由
 
 ### `main` への直接 push
