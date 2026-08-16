@@ -81,3 +81,33 @@ updates:
       # 追跡: Issue #146
       - dependency-name: "jsdom"
         update-types: ["version-update:semver-major"]
+
+  # backstage/templates/service-baseline/skeleton は Scaffolder の雛形で、
+  # 生成先リポジトリにそのまま展開される独立した npm プロジェクト
+  # （固有の package.json / package-lock.json を持つ）。
+  # backstage/package.json の workspaces は packages/* / plugins/* だけで
+  # templates/ を含まないため、上の /backstage エントリ（yarn.lock 1 本）では
+  # skeleton の lockfile に一切届かない。別エントリが要る。
+  # /backstage に directories で相乗りさせない理由:
+  #   - open-pull-requests-limit がディレクトリ間で共有され、@backstage/* の
+  #     大量更新に skeleton の PR 枠が食われる
+  #   - react / backstage グループと jsdom の ignore は skeleton には無関係で、
+  #     読み手に「skeleton にも効いている」と誤読させる
+  # エントリが無い間も security update だけは Dependabot が出すため
+  # （PR #201 = fast-uri が実例）、「alert は来るのに通常更新は来ない」という
+  # 非対称な状態になっていた（Issue #205）。
+  - package-ecosystem: "npm"
+    directory: "/backstage/templates/service-baseline/skeleton"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:15"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    groups:
+      # skeleton の直接依存は @commitlint/* と markdownlint-cli2 の
+      # devDependencies だけなので、1 グループ = 1 PR にまとまる
+      npm-dev:
+        dependency-type: "development"
+        patterns:
+          - "*"
