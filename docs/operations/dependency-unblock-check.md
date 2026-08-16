@@ -209,16 +209,64 @@ peer 制約を**実際に踏むコマンド**（lint / test / 型チェックな
 
 これを検出できる唯一の実測手段が、Dependabot Updates の run ログです。
 `Job definition:` 行の JSON に、その run に適用された `ignore-conditions` が入っています。
+この行を JSON として丸ごとパースします。
 
 ```bash
 gh api repos/kmryst/idp-golden-path/actions/runs/<run-id>/logs > log.zip
+unzip -p log.zip 0_Dependabot.txt \
+  | sed -n 's/.*Job definition: //p' \
+  | python3 -c "
+import sys, json
+for c in json.loads(sys.stdin.readline())['job']['ignore-conditions']:
+    print('%-20s %-22s %-42s %s' % (c['dependency-name'], c['version-requirement'], c['update-types'], c['source']))
+"
+```
+
+**肝は `sed -n 's/.*Job definition: //p'` です。** ログ行は
+`2026-08-16T04:44:13.9590669Z updater | 2026/08/16 04:44:13 INFO <job_1526721114> Job definition: {...}`
+の形で、JSON の前にタイムスタンプと `updater | ... INFO <job_...>` の接頭辞が付いています。
+これを剥がして行を純粋な JSON にしないとパーサが通りません
+（実測: 接頭辞付きのまま `jq` に渡すと `jq: parse error: Invalid numeric literal at line 1, column 14`）。
+`Job definition:` 行は 1 run につき 1 行なので、`readline()` で足ります。
+
+実行結果（run 31927306462、`/backstage` のジョブ、2026-08-16 実測）:
+
+```text
+@types/react-dom     >= 19.a, < 20          None                                       @dependabot ignore command
+jsdom                None                   ['version-update:semver-major']            .github/dependabot.yml
+react                >= 19.a, < 20          None                                       @dependabot ignore command
+react-dom            >= 19.a, < 20          None                                       @dependabot ignore command
+react-router         >= 8.a, < 9            None                                       @dependabot ignore command
+react-router-dom     >= 7.a, < 8            None                                       @dependabot ignore command
+```
+
+`jq` があれば同じ結果を次でも得られます（同 run で実測）。
+
+```bash
+unzip -p log.zip 0_Dependabot.txt \
+  | sed -n 's/.*Job definition: //p' \
+  | jq -r '.job["ignore-conditions"][]
+      | [.["dependency-name"], (.["version-requirement"] // "-"),
+         ((.["update-types"] // ["-"]) | join(",")), .source] | @tsv' \
+  | column -t -s$'\t'
+```
+
+run の選び方と、`gh run view --log` が 0 バイトを返す罠（API を使う理由）は
+[security-scanning.md の「Dependabot の観測面」](./security-scanning.md#dependabot-の観測面)を参照します。
+
+### `grep -o` で切り出してはいけない
+
+```bash
+# NG: 6 件中 2 件しか返らないのに、出力は `]` で終わるので完全な JSON 配列に見え、exit code も 0
 unzip -p log.zip 0_Dependabot.txt | grep -o '"ignore-conditions":\[[^]]*\]'
 ```
 
-`update-types` を持つエントリは内部に `]` を含むため、上の `grep` は途中で切れます。
-全件を構造化して見る場合は `Job definition:` の JSON を丸ごと取り出してパースしてください。
-run の選び方と、`gh run view --log` が 0 バイトを返す罠（API を使う理由）は
-[security-scanning.md の「Dependabot の観測面」](./security-scanning.md#dependabot-の観測面)を参照します。
+`update-types: ["version-update:semver-major"]` を持つエントリは配列の内側に `]` を含むため、
+`[^]]*` がそこで打ち切られます。同じ run 31927306462 でこの `grep` を実行すると、
+出力は 1 行だけで、含まれるのは `@types/react-dom` と（`update-types` の途中で切れた）`jsdom` の
+**先頭 2 件分**です。落ちる 4 件（`react` / `react-dom` / `react-router` / `react-router-dom`）は
+すべて `@dependabot ignore command` 由来で、**この節が検出したい当のものがまるごと消えます。**
+しかも exit 0 なので、失敗として検知できません。
 
 ### `source` フィールドの読み方
 
