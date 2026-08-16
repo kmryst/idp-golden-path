@@ -55,7 +55,6 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "adm-zip": "^0.6.0",
-    "js-yaml@npm:=4.2.0": "^4.3.0",
     "protobufjs": "^7.6.5",
     "undici@npm:7.28.0": "^7.29.0"
   },
