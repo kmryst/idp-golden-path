@@ -46,7 +46,7 @@
     "@backstage/plugin-techdocs-backend": "^2.2.2",
     "app": "link:../app",
     "node-gyp": "^13.0.1",
-    "pg": "^8.11.3"
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@backstage/cli": "^0.36.4",
