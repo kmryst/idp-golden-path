@@ -12,6 +12,23 @@
 state は S3 backend（`idp-golden-path-tfstate-ba25cd9e`）に層ごとの key で分離し、
 S3 ネイティブロック（`use_lockfile`）を使う。
 
+## 層名 `ephemeral` と Terraform 言語構文の `ephemeral` は無関係
+
+Terraform 1.10 で言語構文としての `ephemeral`（ブロック型キーワード）が導入された。
+その語義は「**state / plan に永続化されない**」値・リソースである
+（出典: <https://developer.hashicorp.com/terraform/language/resources/ephemeral>）。
+
+一方、本リポジトリの層名 `persistent` / `ephemeral` / `ipam` は
+**リソースの寿命と役割**（検証毎に apply → destroy する層かどうか）を指しており、
+言語構文の `ephemeral` とは無関係である。むしろ語義は逆で、`ephemeral/` は
+state を通常どおり `ephemeral/terraform.tfstate`（上記 S3 backend）へ**永続化する**
+ルートモジュールである。
+
+なお「ephemeral environment（短命な検証環境）」は業界標準語であり、その用法は問題ない。
+衝突しているのは層名 / state キーとしての `ephemeral` のみである。
+この衝突を認識した上で改名しない判断とその理由（state キー・IAM 条件・タグ・CI への波及範囲）は
+[ADR 0010 の追記（2026-08-27）](../docs/adr/0010-ci-driven-deploy-destroy-workflows.md)に記録している。
+
 ## Terraform CLI のバージョン
 
 **1.14.8**（3 リポジトリ共通の標準。[ADR 0014](../docs/adr/0014-terraform-toolchain-version-standardization.md)）。
