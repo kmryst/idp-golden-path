@@ -122,7 +122,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.2.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       # load: true でローカル daemon にイメージを読み込む。docker push はしない。
       # cache-from/to: type=gha により、同一リポジトリの前回ビルドのレイヤーを再利用する
