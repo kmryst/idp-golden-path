@@ -106,3 +106,39 @@ IDP ポートフォリオとして示したい能力である。
 - [ADR 0009](./0009-production-deployment-on-ecs-fargate.md) — 本番デプロイ構成と 3 層 state 分離（本 ADR はその実行手段を変更）
 - [runbook](../operations/deploy-runbook.md)
 - Issue [#69](https://github.com/kmryst/idp-golden-path/issues/69) / PR [#70](https://github.com/kmryst/idp-golden-path/pull/70)
+
+## 追記（2026-08-27）: 層名 `ephemeral` は言語構文の `ephemeral` と衝突するが改名しない
+
+### 事実
+
+Terraform 1.10 で `ephemeral` が言語構文のブロック型キーワードとして導入された。その語義は
+「**state / plan に永続化されない**」である
+（出典: <https://developer.hashicorp.com/terraform/language/resources/ephemeral>）。
+
+一方、本リポジトリの `terraform/ephemeral/` は state を `ephemeral/terraform.tfstate` へ
+**確かに永続化する**ルートモジュールであり、層名の `ephemeral` は「リソースの寿命
+（検証毎に apply → destroy する層かどうか）」を指す。同名でありながら語義が逆である。
+
+なお「ephemeral environment（短命な検証環境）」は業界標準語であり、その用法は問題ない。
+本追記が対象とするのは層名 / state キーとしての用法のみである。
+
+### 判断
+
+**層名は改名しない。** 衝突は認識した上での命名として docs に明示するに留める
+（`terraform/README.md` に利用者向けの説明を記載。Issue [#229](https://github.com/kmryst/idp-golden-path/issues/229)）。
+
+### 理由
+
+動作上の影響がない一方、この語は次の 4 箇所に波及しており、改名のコストが利益に見合わない。
+
+- state キー `ephemeral/terraform.tfstate` — 改名すると state 移行（キーの付け替え）が必要になる
+- IAM ポリシーの書き込み許可条件 `"${local.tfstate_bucket_arn}/ephemeral/*"` — 本 ADR の
+  「tfstate 書き込みは `ephemeral/*` / `ipam/*` キーのみ」という境界設計の条件文字列そのもの
+- リソースタグ `Layer = "ephemeral"` — 既存リソースのタグ付け替えが必要になる
+- `.github/workflows/deploy.yml` / `destroy.yml` の `working-directory: terraform/ephemeral`
+
+### 関連
+
+- Issue [#229](https://github.com/kmryst/idp-golden-path/issues/229)
+- [terraform/README.md](../../terraform/README.md) — 利用者向けの説明（正本）
+- felis-ai-chatbot でも同種の対応を実施（[kmryst/felis-ai-chatbot#132](https://github.com/kmryst/felis-ai-chatbot/issues/132)）
