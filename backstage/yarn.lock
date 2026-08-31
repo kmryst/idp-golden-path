@@ -13175,7 +13175,7 @@ __metadata:
     "@backstage/plugin-techdocs-backend": "npm:^2.2.3"
     app: "link:../app"
     better-sqlite3: "npm:^13.0.3"
-    node-gyp: "npm:^13.0.1"
+    node-gyp: "npm:^13.0.2"
     pg: "npm:^8.23.0"
   languageName: unknown
   linkType: soft
@@ -23296,7 +23296,27 @@ __metadata:
   languageName: node
   linkType: hard
 
-"node-gyp@npm:^13.0.1, node-gyp@npm:latest":
+"node-gyp@npm:^13.0.2":
+  version: 13.0.2
+  resolution: "node-gyp@npm:13.0.2"
+  dependencies:
+    env-paths: "npm:^2.2.0"
+    exponential-backoff: "npm:^3.1.1"
+    graceful-fs: "npm:^4.2.6"
+    nopt: "npm:^10.0.0"
+    proc-log: "npm:^7.0.0"
+    semver: "npm:^7.3.5"
+    tar: "npm:^7.5.4"
+    tinyglobby: "npm:^0.2.12"
+    undici: "npm:^8.4.1"
+    which: "npm:^7.0.0"
+  bin:
+    node-gyp: bin/node-gyp.js
+  checksum: 10c0/29d33ccf47ffeeb5e7af925550b416f698a26a72eb10975c7eb5775c1d0cecacd76d164a4aa45503d3ddcece209db65c712be00423c69381a4cd14e2e6540559
+  languageName: node
+  linkType: hard
+
+"node-gyp@npm:latest":
   version: 13.0.1
   resolution: "node-gyp@npm:13.0.1"
   dependencies:
@@ -27155,7 +27175,7 @@ __metadata:
     "@types/jest": "npm:^30.0.0"
     jest: "npm:~30.4.2"
     jsdom: "npm:^29.1.1"
-    node-gyp: "npm:^13.0.1"
+    node-gyp: "npm:^13.0.2"
     prettier: "npm:^3.9.6"
     typescript: "npm:~6.0.3"
   languageName: unknown

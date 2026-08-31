@@ -45,7 +45,7 @@
     "@backstage/plugin-signals-backend": "^0.3.18",
     "@backstage/plugin-techdocs-backend": "^2.2.3",
     "app": "link:../app",
-    "node-gyp": "^13.0.1",
+    "node-gyp": "^13.0.2",
     "pg": "^8.23.0"
   },
   "devDependencies": {
