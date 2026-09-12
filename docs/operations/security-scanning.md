@@ -156,14 +156,16 @@ resolutions は「その行を外して依存解決し直せば、まだ必要�
 
 | チェック | 実行タイミング | 実行 job | 内容 |
 | --- | --- | --- | --- |
-| sync | 毎回（PR / 週次 / 手動） | `Dependency Audit` | 台帳のスキーマ検証と、`backstage/package.json` の resolutions との同期（欠落・右辺不一致で fail） |
+| sync | 毎回（PR / 週次 / 手動） | `Yarn Resolutions Registry` | 台帳のスキーマ検証と、`backstage/package.json` の resolutions との同期（欠落・右辺不一致で fail） |
 | stale（棚卸し） | 週次 schedule / 手動 | `Yarn Resolutions Inventory` | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する |
 
-stale は `Dependency Audit` job とは別の `Yarn Resolutions Inventory` job で実行します
-（`needs:` による依存も持たせません）。同一 job の step にすると、step の `if:` に含まれる暗黙の
-`success()` により **audit ゲートが fail している間は棚卸しが丸ごと skip** されます。
-ゲート（今まずい依存が入っていないか）と棚卸し（過去に入れた回避策がまだ必要か）は
-目的も実行タイミングも失敗の意味も異なるため、job を分けて従属関係を持たせません（Issue #255）。
+sync / stale はどちらも `Dependency Audit` job とは別の job で実行し、`needs:` による依存も持たせません。
+同一 job の step にすると、step の `if:` に含まれる暗黙の `success()` により
+**audit ゲートが fail している間はこれらの検査が丸ごと skip** されます。
+ゲート（今まずい依存が入っていないか）・台帳同期（宣言と台帳がずれていないか）・
+棚卸し（過去に入れた回避策がまだ必要か）は目的も失敗の意味も異なるため、
+1 つのガードレールの失敗が他を無効化しない構造にします（Issue #255 / #257）。
+実行タイミングの違い（sync は毎回、stale は週次 / 手動）は各 job の `if:` で表現します。
 
 **削除条件**: stale チェックで advisory が再出現しなかった resolution は不要になっているため **fail** する
 （期限切れ例外と違い「該当行と台帳エントリを消すだけ」で対応コストが低く、放置する理由がないため

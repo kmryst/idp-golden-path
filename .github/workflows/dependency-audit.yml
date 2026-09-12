@@ -242,17 +242,6 @@ jobs:
           fi
           node "$script"
 
-      # セキュリティ起因 resolutions の台帳（scripts/ci/yarn-resolutions.json）と
-      # backstage/package.json の同期検証。本リポジトリ固有のチェックであり消費側では実行しない
-      - name: Check yarn resolutions registry (sync)
-        if: >-
-          ${{
-            (inputs.package-manager || 'yarn') == 'yarn' &&
-            github.repository == 'kmryst/idp-golden-path'
-          }}
-        working-directory: ${{ github.workspace }}
-        run: node scripts/ci/yarn-resolutions-audit.mjs sync
-
       # 全 severity のレポート（fail させない可視化用）— npm
       # npm audit は package-lock.json のみで動作し、事前の npm ci は不要
       - name: Audit report (all severities, warn only) [npm]
@@ -342,6 +331,43 @@ jobs:
         run: >-
           node
           "$GITHUB_WORKSPACE/.idp-golden-path-workflow/scripts/ci/npm-audit-policy.mjs"
+
+  # セキュリティ起因 resolutions の台帳（scripts/ci/yarn-resolutions.json）と
+  # backstage/package.json の同期検証。本リポジトリ固有のチェックであり消費側では実行しない。
+  # yarn-resolutions-inventory と同じ理由で dependency-audit job から独立させている:
+  # 台帳同期の検査と audit ゲートは目的が異なり、同一 job に同居させると step の
+  # 暗黙の success() によって「audit gate が落ちている間は同期検査も skip される」
+  # 従属関係が生まれる（Issue #257）。同じ理由で needs: も付けない。
+  # 判定材料はリポジトリ内のファイルだけで再解決コストも無いため、
+  # stale と違い PR を含む全実行で走らせる（実行タイミングは切り出し前と同じ）
+  yarn-resolutions-registry:
+    name: Yarn Resolutions Registry
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path'
+      }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory || 'backstage' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack (Yarn 4)
+        run: |
+          corepack enable
+          yarn --version
+
+      - name: Check yarn resolutions registry (sync)
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/yarn-resolutions-audit.mjs sync
 
   # resolutions の棚卸し: 台帳の resolutions を外した一時プロジェクトで再解決し、
   # advisory が再出現しない resolution（= 不要になったもの）を fail で検出する。
