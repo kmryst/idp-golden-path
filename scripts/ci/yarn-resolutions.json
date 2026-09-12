@@ -1,5 +1,12 @@
 [
   {
+    "pattern": "adm-zip@npm:0.5.10",
+    "resolution": "^0.6.0",
+    "advisories": ["GHSA-xcpc-8h2w-3j85"],
+    "dependents": ["@module-federation/dts-plugin@npm:2.6.0"],
+    "reason": "@module-federation/dts-plugin 2.6.0 が adm-zip 0.5.10 を exact pin しており、resolutions なしで再解決しても脆弱バージョンが選ばれる"
+  },
+  {
     "pattern": "js-yaml@npm:=4.3.1",
     "resolution": "^4.3.2",
     "advisories": ["GHSA-2883-xcg3-v3hh"],

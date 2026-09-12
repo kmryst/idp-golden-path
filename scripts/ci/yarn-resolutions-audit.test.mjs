@@ -5,6 +5,7 @@ import { AuditPolicyError } from "./npm-audit-policy.mjs";
 import {
   checkSync,
   evaluateStaleness,
+  parseNonSecurityResolutions,
   parseResolutionsRegistry,
   renderResolutionsSummary,
 } from "./yarn-resolutions-audit.mjs";
@@ -19,6 +20,14 @@ function registryEntry(overrides = {}) {
     advisories: [GHSA],
     dependents: ["@module-federation/dts-plugin@npm:2.6.0"],
     reason: "exact pin keeps resolving a vulnerable version",
+    ...overrides,
+  };
+}
+
+function nonSecurityEntry(overrides = {}) {
+  return {
+    pattern: "@types/react",
+    reason: "React 18 系に型を揃えるためのバージョン統一",
     ...overrides,
   };
 }
@@ -105,16 +114,70 @@ test("rejects malformed registry entries", async (t) => {
   }
 });
 
-test("sync passes when every registry entry matches package.json resolutions", () => {
-  const result = checkSync([registryEntry()], {
-    "undici@npm:7.28.0": "^7.29.0",
-    protobufjs: "^7.6.5",
-  });
+test("parses a canonical non-security declaration", () => {
+  const entry = nonSecurityEntry();
+  assert.deepEqual(parseNonSecurityResolutions(JSON.stringify([entry])), [
+    entry,
+  ]);
+});
+
+test("parses empty non-security input as an empty list", () => {
+  assert.deepEqual(parseNonSecurityResolutions(""), []);
+  assert.deepEqual(parseNonSecurityResolutions("[]"), []);
+});
+
+test("rejects malformed non-security declarations", async (t) => {
+  const invalidCases = [
+    { name: "non-array", raw: "{}", message: /must be a JSON array/ },
+    { name: "invalid JSON", raw: "{", message: /must be valid JSON/ },
+    {
+      name: "unknown field",
+      raw: JSON.stringify([{ ...nonSecurityEntry(), advisories: [GHSA] }]),
+      message: /must contain exactly pattern and reason/,
+    },
+    {
+      name: "empty pattern",
+      raw: JSON.stringify([nonSecurityEntry({ pattern: " " })]),
+      message: /pattern must be a non-empty string/,
+    },
+    {
+      name: "duplicate pattern",
+      raw: JSON.stringify([nonSecurityEntry(), nonSecurityEntry()]),
+      message: /duplicates/,
+    },
+    {
+      name: "empty reason",
+      raw: JSON.stringify([nonSecurityEntry({ reason: "" })]),
+      message: /reason must be a non-empty string/,
+    },
+  ];
+
+  for (const invalidCase of invalidCases) {
+    await t.test(invalidCase.name, () => {
+      assert.throws(
+        () => parseNonSecurityResolutions(invalidCase.raw),
+        invalidCase.message,
+      );
+    });
+  }
+});
+
+test("sync passes when every package.json resolution is declared", () => {
+  const result = checkSync(
+    [registryEntry()],
+    {
+      "undici@npm:7.28.0": "^7.29.0",
+      "@types/react": "^18",
+    },
+    [nonSecurityEntry()],
+  );
   assert.deepEqual(result, { pass: true, problems: [] });
 });
 
 test("sync fails on a missing or mismatching package.json resolution", () => {
-  const missing = checkSync([registryEntry()], { protobufjs: "^7.6.5" });
+  const missing = checkSync([registryEntry()], { "@types/react": "^18" }, [
+    nonSecurityEntry(),
+  ]);
   assert.equal(missing.pass, false);
   assert.match(missing.problems[0], /missing from package.json resolutions/);
 
@@ -125,9 +188,39 @@ test("sync fails on a missing or mismatching package.json resolution", () => {
   assert.match(mismatch.problems[0], /resolves to 7.29.0 in package.json/);
 });
 
-test("sync tolerates unmanaged resolutions in package.json", () => {
+test("sync fails on a package.json resolution declared in neither list", () => {
   const result = checkSync([], { "@types/react": "^18" });
-  assert.equal(result.pass, true);
+
+  assert.equal(result.pass, false);
+  assert.equal(result.problems.length, 1);
+  assert.match(
+    result.problems[0],
+    /@types\/react is present in package.json resolutions but declared in neither/,
+  );
+});
+
+test("sync fails when a non-security declaration has no package.json resolution", () => {
+  const result = checkSync([], {}, [nonSecurityEntry()]);
+
+  assert.equal(result.pass, false);
+  assert.match(
+    result.problems[0],
+    /declared in yarn-resolutions-non-security.json but missing from package.json resolutions/,
+  );
+});
+
+test("sync fails when a pattern is declared in both registry and non-security list", () => {
+  const result = checkSync(
+    [registryEntry()],
+    { "undici@npm:7.28.0": "^7.29.0" },
+    [nonSecurityEntry({ pattern: "undici@npm:7.28.0" })],
+  );
+
+  assert.equal(result.pass, false);
+  assert.match(
+    result.problems[0],
+    /declared in both yarn-resolutions.json and yarn-resolutions-non-security.json/,
+  );
 });
 
 test("sync fails closed on a malformed resolutions object", () => {

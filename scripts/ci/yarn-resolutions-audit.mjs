@@ -7,8 +7,11 @@
 // 台帳（scripts/ci/yarn-resolutions.json）と実測の 2 つで管理する。
 //
 // - sync モード（毎 PR）: 台帳のスキーマ検証と、backstage/package.json の
-//   resolutions との同期検証。台帳エントリが package.json に無い、または
-//   右辺が一致しない場合は fail する
+//   resolutions との双方向の同期検証。台帳エントリが package.json に無い、または
+//   右辺が一致しない場合は fail する。逆に package.json の resolutions が
+//   台帳にも非セキュリティ起因の宣言（scripts/ci/yarn-resolutions-non-security.json）
+//   にも無い場合も fail する。片方向だけだと、セキュリティ起因の resolutions が
+//   台帳未登録のまま週次 stale 棚卸しの対象外で残り続けるため（Issue #259）
 // - stale モード（週次 / 手動）: 台帳の resolutions を全部外した一時プロジェクトで
 //   lockfile を再解決（yarn install --mode=update-lockfile）して audit を実行し、
 //   台帳に記録された advisory が再出現するかを実測する。
@@ -39,6 +42,12 @@ const RESOLUTION_PATTERN_FORMAT = /^(@?[a-z0-9][a-z0-9._/-]*)@npm:.+$/i;
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REGISTRY_PATH = join(REPO_ROOT, "scripts", "ci", "yarn-resolutions.json");
+const NON_SECURITY_PATH = join(
+  REPO_ROOT,
+  "scripts",
+  "ci",
+  "yarn-resolutions-non-security.json",
+);
 const PROJECT_DIR = join(REPO_ROOT, "backstage");
 
 function isRecord(value) {
@@ -137,7 +146,55 @@ export function parseResolutionsRegistry(raw) {
   });
 }
 
-export function checkSync(registry, manifestResolutions) {
+export function parseNonSecurityResolutions(raw) {
+  let parsed;
+
+  try {
+    parsed = JSON.parse(raw === undefined || raw.trim() === "" ? "[]" : raw);
+  } catch (error) {
+    throw new AuditPolicyError(
+      `yarn-resolutions-non-security must be valid JSON: ${error.message}`,
+    );
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new AuditPolicyError(
+      "yarn-resolutions-non-security must be a JSON array",
+    );
+  }
+
+  const seenPatterns = new Set();
+
+  return parsed.map((entry, index) => {
+    const label = `yarn-resolutions-non-security[${index}]`;
+    if (!isRecord(entry)) {
+      throw new AuditPolicyError(`${label} must be an object`);
+    }
+
+    const keys = Object.keys(entry).sort();
+    if (keys.length !== 2 || keys[0] !== "pattern" || keys[1] !== "reason") {
+      throw new AuditPolicyError(
+        `${label} must contain exactly pattern and reason`,
+      );
+    }
+
+    if (typeof entry.pattern !== "string" || entry.pattern.trim() === "") {
+      throw new AuditPolicyError(`${label}.pattern must be a non-empty string`);
+    }
+    if (seenPatterns.has(entry.pattern)) {
+      throw new AuditPolicyError(`${label}.pattern duplicates ${entry.pattern}`);
+    }
+    seenPatterns.add(entry.pattern);
+
+    if (typeof entry.reason !== "string" || entry.reason.trim() === "") {
+      throw new AuditPolicyError(`${label}.reason must be a non-empty string`);
+    }
+
+    return { pattern: entry.pattern, reason: entry.reason };
+  });
+}
+
+export function checkSync(registry, manifestResolutions, nonSecurity = []) {
   if (!isRecord(manifestResolutions)) {
     throw new AuditPolicyError(
       "backstage/package.json resolutions must be an object",
@@ -146,6 +203,14 @@ export function checkSync(registry, manifestResolutions) {
 
   const problems = [];
 
+  const declaredPatterns = new Set([
+    ...registry.map((entry) => entry.pattern),
+    ...nonSecurity.map((entry) => entry.pattern),
+  ]);
+
+  const registryPatterns = new Set(registry.map((entry) => entry.pattern));
+
+  // 台帳 -> package.json（従来からの片方向検証）
   for (const entry of registry) {
     const actual = manifestResolutions[entry.pattern];
     if (actual === undefined) {
@@ -155,6 +220,29 @@ export function checkSync(registry, manifestResolutions) {
     } else if (actual !== entry.resolution) {
       problems.push(
         `${entry.pattern} resolves to ${String(actual)} in package.json but ${entry.resolution} in yarn-resolutions.json`,
+      );
+    }
+  }
+
+  // 非セキュリティ起因の宣言 -> package.json（宣言だけが残るのを防ぐ）
+  for (const entry of nonSecurity) {
+    if (registryPatterns.has(entry.pattern)) {
+      problems.push(
+        `${entry.pattern} is declared in both yarn-resolutions.json and yarn-resolutions-non-security.json`,
+      );
+    }
+    if (manifestResolutions[entry.pattern] === undefined) {
+      problems.push(
+        `${entry.pattern} is declared in yarn-resolutions-non-security.json but missing from package.json resolutions`,
+      );
+    }
+  }
+
+  // package.json -> 台帳 / 非セキュリティ宣言（未登録 resolutions の検出）
+  for (const pattern of Object.keys(manifestResolutions)) {
+    if (!declaredPatterns.has(pattern)) {
+      problems.push(
+        `${pattern} is present in package.json resolutions but declared in neither yarn-resolutions.json nor yarn-resolutions-non-security.json`,
       );
     }
   }
@@ -256,6 +344,13 @@ function readRegistry() {
   return parseResolutionsRegistry(readFileSync(REGISTRY_PATH, "utf8"));
 }
 
+function readNonSecurityResolutions() {
+  if (!existsSync(NON_SECURITY_PATH)) {
+    return [];
+  }
+  return parseNonSecurityResolutions(readFileSync(NON_SECURITY_PATH, "utf8"));
+}
+
 function readManifest() {
   const manifest = JSON.parse(readFileSync(join(PROJECT_DIR, "package.json"), "utf8"));
   if (!isRecord(manifest)) {
@@ -266,8 +361,9 @@ function readManifest() {
 
 function runSync() {
   const registry = readRegistry();
+  const nonSecurity = readNonSecurityResolutions();
   const manifest = readManifest();
-  const result = checkSync(registry, manifest.resolutions ?? {});
+  const result = checkSync(registry, manifest.resolutions ?? {}, nonSecurity);
 
   if (!result.pass) {
     for (const problem of result.problems) {
@@ -278,7 +374,7 @@ function runSync() {
   }
 
   process.stdout.write(
-    `yarn-resolutions.json is in sync with package.json (${registry.length} managed resolutions)\n`,
+    `yarn-resolutions.json is in sync with package.json (${registry.length} managed resolutions, ${nonSecurity.length} declared non-security resolutions)\n`,
   );
 }
 
@@ -373,8 +469,9 @@ function appendSummary(markdown) {
 
 function runStale() {
   const registry = readRegistry();
+  const nonSecurity = readNonSecurityResolutions();
   const manifest = readManifest();
-  const sync = checkSync(registry, manifest.resolutions ?? {});
+  const sync = checkSync(registry, manifest.resolutions ?? {}, nonSecurity);
   if (!sync.pass) {
     throw new AuditPolicyError(
       `yarn-resolutions.json is out of sync: ${sync.problems.join("; ")}`,
