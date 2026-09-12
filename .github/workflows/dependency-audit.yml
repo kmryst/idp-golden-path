@@ -253,24 +253,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: node scripts/ci/yarn-resolutions-audit.mjs sync
 
-      # resolutions の棚卸し: 台帳の resolutions を外した一時プロジェクトで再解決し、
-      # advisory が再出現しない resolution（= 不要になったもの）を fail で検出する。
-      # 判定材料（上流のリリース）は週次でしか変わらず、依存グラフ全体の再解決コストを
-      # 毎 PR で払う価値がないため、schedule / 手動実行に限定する（ADR-0008 追記 2026-08-05）
-      # audit gate が落ちている時期こそ resolutions を触っており棚卸しが必要なため、
-      # 暗黙の success() を !cancelled() で外し、前段ゲートの成否に依存させない
-      # （step 単位の失敗は job の結論に残るので、ゲートの failure は握りつぶされない）
-      - name: Check yarn resolutions inventory (stale)
-        if: >-
-          ${{
-            !cancelled() &&
-            (inputs.package-manager || 'yarn') == 'yarn' &&
-            github.repository == 'kmryst/idp-golden-path' &&
-            (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-          }}
-        working-directory: ${{ github.workspace }}
-        run: node scripts/ci/yarn-resolutions-audit.mjs stale
-
       # 全 severity のレポート（fail させない可視化用）— npm
       # npm audit は package-lock.json のみで動作し、事前の npm ci は不要
       - name: Audit report (all severities, warn only) [npm]
@@ -360,3 +342,45 @@ jobs:
         run: >-
           node
           "$GITHUB_WORKSPACE/.idp-golden-path-workflow/scripts/ci/npm-audit-policy.mjs"
+
+  # resolutions の棚卸し: 台帳の resolutions を外した一時プロジェクトで再解決し、
+  # advisory が再出現しない resolution（= 不要になったもの）を fail で検出する。
+  # 判定材料（上流のリリース）は週次でしか変わらず、依存グラフ全体の再解決コストを
+  # 毎 PR で払う価値がないため、schedule / 手動実行に限定する（ADR-0008 追記 2026-08-05）
+  #
+  # dependency-audit job から独立した job にしているのは、両者の目的・実行タイミング・
+  # 失敗の意味が異なるため。audit gate は「今まずい依存が入っていないか」を毎 PR で止めるゲート、
+  # 棚卸しは「過去に入れた回避策がまだ必要か」を週次で確かめる処理であり、
+  # 同一 job に同居させると step の暗黙の success() によって
+  # 「audit gate が落ちている間は棚卸しが丸ごと skip される」従属関係が生まれる（Issue #255）。
+  # 同じ理由で needs: も付けない（付けると再び audit gate の失敗に引きずられる）
+  yarn-resolutions-inventory:
+    name: Yarn Resolutions Inventory
+    # 本リポジトリ固有のチェックであり消費側では実行しない
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path' &&
+        (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory || 'backstage' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Enable Corepack (Yarn 4)
+        run: |
+          corepack enable
+          yarn --version
+
+      - name: Check yarn resolutions inventory (stale)
+        working-directory: ${{ github.workspace }}
+        run: node scripts/ci/yarn-resolutions-audit.mjs stale
