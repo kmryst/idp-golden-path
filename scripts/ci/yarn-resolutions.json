@@ -1,5 +1,12 @@
 [
   {
+    "pattern": "js-yaml@npm:=4.3.1",
+    "resolution": "^4.3.2",
+    "advisories": ["GHSA-2883-xcg3-v3hh"],
+    "dependents": ["swagger-ui-react@npm:5.32.13"],
+    "reason": "swagger-ui-react 5.32.13 が js-yaml を =4.3.1 で exact pin しており、resolutions なしで再解決しても脆弱バージョンが選ばれる（最新の 5.32.15 でも同じ pin）"
+  },
+  {
     "pattern": "undici@npm:7.28.0",
     "resolution": "^7.29.0",
     "advisories": ["GHSA-4cwx-7wf7-3272"],
