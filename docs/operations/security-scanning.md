@@ -151,12 +151,21 @@ resolutions は「その行を外して依存解決し直せば、まだ必要�
 
 **台帳（サイドカー）**: `package.json` にはコメントを書けないため、セキュリティ起因の resolutions は
 `scripts/ci/yarn-resolutions.json` に理由・対応 GHSA・経路（dependents）を必ず登録する。
+
+**非セキュリティ起因の resolutions**: バージョン統一やビルド不整合の回避で入れた resolutions は
+advisory を持たないため台帳（`yarn-resolutions.json`）には登録できない。
+代わりに `scripts/ci/yarn-resolutions-non-security.json` に `pattern` と `reason` の 2 キーで宣言する。
+こちらは棚卸し（stale）の対象外で、advisory の再出現による削除判定は行わない。
+`@types/react` / `@types/react-dom` の React 18 系への統一がこれに当たる。
+
+`backstage/package.json` の `resolutions` に書かれた行は、
+**どちらか一方のファイルに必ず宣言されていなければならない**（両方に書くのも fail）。
 `scripts/ci/yarn-resolutions-audit.mjs` が次の 2 つを検証する
 （ユニットテストは `scripts/ci/yarn-resolutions-audit.test.mjs`）。
 
 | チェック | 実行タイミング | 実行 job | 内容 |
 | --- | --- | --- | --- |
-| sync | 毎回（PR / 週次 / 手動） | `Yarn Resolutions Registry` | 台帳のスキーマ検証と、`backstage/package.json` の resolutions との同期（欠落・右辺不一致で fail） |
+| sync | 毎回（PR / 週次 / 手動） | `Yarn Resolutions Registry` | 台帳と非セキュリティ宣言のスキーマ検証と、`backstage/package.json` の resolutions との**双方向**の同期（欠落・右辺不一致・未宣言の resolutions で fail） |
 | stale（棚卸し） | 週次 schedule / 手動 | `Yarn Resolutions Inventory` | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する |
 
 sync / stale はどちらも `Dependency Audit` job とは別の job で実行し、`needs:` による依存も持たせません。
@@ -166,6 +175,12 @@ sync / stale はどちらも `Dependency Audit` job とは別の job で実行�
 棚卸し（過去に入れた回避策がまだ必要か）は目的も失敗の意味も異なるため、
 1 つのガードレールの失敗が他を無効化しない構造にします（Issue #255 / #257）。
 実行タイミングの違い（sync は毎回、stale は週次 / 手動）は各 job の `if:` で表現します。
+
+sync を双方向にしているのは、片方向（台帳 → `package.json`）だけだと
+**セキュリティ起因の resolutions が台帳未登録のまま週次棚卸しの対象外で残り続ける**ためです。
+実際に `protobufjs` / `adm-zip` の 2 件が未登録のまま数か月残り、
+`protobufjs` は再解決すれば修正版が選ばれる（= 不要な足止め）状態になっていました（Issue #259）。
+`package.json` → 宣言ファイルの向きも検査することで、この乖離を追加時点で止めます。
 
 **削除条件**: stale チェックで advisory が再出現しなかった resolution は不要になっているため **fail** する
 （期限切れ例外と違い「該当行と台帳エントリを消すだけ」で対応コストが低く、放置する理由がないため

@@ -1,0 +1,10 @@
+[
+  {
+    "pattern": "@types/react",
+    "reason": "Backstage の React 18 系 UI に型を揃えるためのバージョン統一。@types/react 19 が混入すると app / plugin の tsc が壊れる。advisory 回避ではない"
+  },
+  {
+    "pattern": "@types/react-dom",
+    "reason": "@types/react と同じ major に揃えるためのバージョン統一。片方だけ 19 になると JSX の型が食い違う。advisory 回避ではない"
+  }
+]
