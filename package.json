@@ -6,7 +6,7 @@
   "scripts": {
     "commitlint": "commitlint",
     "lint:md": "markdownlint-cli2",
-    "test:dependency-audit-policy": "node --test scripts/ci/npm-audit-policy.test.mjs scripts/ci/yarn-audit-policy.test.mjs scripts/ci/yarn-resolutions-audit.test.mjs",
+    "test:dependency-audit-policy": "node --test scripts/ci/npm-audit-policy.test.mjs scripts/ci/npm-overrides-audit.test.mjs scripts/ci/yarn-audit-policy.test.mjs scripts/ci/yarn-resolutions-audit.test.mjs",
     "test:dependency-unblock-check": "node --test scripts/ci/dependabot-unblock-check.test.mjs",
     "test:workflow-input-contract": "node --test scripts/ci/workflow-input-contract.test.mjs"
   },

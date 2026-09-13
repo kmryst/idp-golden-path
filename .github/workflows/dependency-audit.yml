@@ -120,6 +120,7 @@ jobs:
         run: >-
           node --test
           scripts/ci/npm-audit-policy.test.mjs
+          scripts/ci/npm-overrides-audit.test.mjs
           scripts/ci/yarn-audit-policy.test.mjs
           scripts/ci/yarn-resolutions-audit.test.mjs
 
@@ -477,3 +478,56 @@ jobs:
       - name: Check yarn resolutions inventory (stale)
         working-directory: ${{ github.workspace }}
         run: node scripts/ci/yarn-resolutions-audit.mjs stale
+
+  # セキュリティ起因 npm overrides の台帳（scripts/ci/npm-overrides.json）と、
+  # ルート / skeleton の package.json の overrides の同期検証。
+  # yarn 側の Yarn Resolutions Registry と同じ位置づけで、本リポジトリ固有のチェックのため
+  # 消費側では実行しない。判定材料はリポジトリ内のファイルだけで再解決コストも無いため、
+  # stale と違い PR を含む全実行で走らせる。
+  # dependency-audit / npm-dependency-audit job から独立させ、needs: も付けない。
+  # 同一 job の step にすると step の暗黙の success() により
+  # 「audit ゲートが落ちている間は同期検査も skip される」従属関係が生まれる（Issue #255 / #257）
+  npm-overrides-registry:
+    name: npm Overrides Registry
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Check npm overrides registry (sync)
+        run: node scripts/ci/npm-overrides-audit.mjs sync
+
+  # npm overrides の棚卸し: 台帳の overrides を外した一時プロジェクトで lockfile を再解決し、
+  # advisory が再出現しない overrides（= 不要になったもの）を fail で検出する。
+  # yarn 側の Yarn Resolutions Inventory と同じく、判定材料（上流のリリース）は週次でしか
+  # 変わらず、再解決コストを毎 PR で払う価値がないため schedule / 手動実行に限定する
+  npm-overrides-inventory:
+    name: npm Overrides Inventory
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path' &&
+        (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Check npm overrides inventory (stale)
+        run: node scripts/ci/npm-overrides-audit.mjs stale

@@ -90,8 +90,9 @@ no-op ペア workflow 方式での required 昇格を再検討する。
   Dependabot の免除条件は called workflow 内の個々の step だけに置き、branch protection が要求する check を必ず作成する
 - `.github/workflows/` の CI ガードレールは、他リポジトリから `@v1` 参照される reusable workflows を兼ねる（[ADR 0008](../adr/0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md)）。job name や inputs の変更は本リポジトリの required status checks だけでなく消費側リポジトリの check run 名にも影響するため、破壊的変更は major タグ（`v2`）として扱う
 - `.github/workflows/dependency-audit.yml` は `Dependency Audit` / `npm Dependency Audit (root)` /
-  `npm Dependency Audit (skeleton)` / `Yarn Resolutions Registry` / `Yarn Resolutions Inventory` の
-  5 check run で構成する（Issue #255 / #257 / #263）。いずれも required status checks には追加しない。
+  `npm Dependency Audit (skeleton)` / `Yarn Resolutions Registry` / `Yarn Resolutions Inventory` /
+  `npm Overrides Registry` / `npm Overrides Inventory` の
+  7 check run で構成する（Issue #255 / #257 / #263 / #265）。いずれも required status checks には追加しない。
   - `Yarn Resolutions Inventory` は schedule / `workflow_dispatch` でのみ実行し、PR では skip される。
     skip される check を required にすると永久に pending になる
   - `Yarn Resolutions Registry` は PR でも実行されるが、`Dependency Audit` と同じく
@@ -99,6 +100,9 @@ no-op ペア workflow 方式での required 昇格を再検討する。
   - `npm Dependency Audit` はルートと skeleton を対象とする matrix job のため、check run 名は
     `npm Dependency Audit (<label>)` の形になる。fail 要因（新規公開 CVE）が PR の変更内容と
     無関係に発生する点は `Dependency Audit` と同じで、非 required のまま運用する
+  - `npm Overrides Inventory` は `Yarn Resolutions Inventory` と同じく schedule / `workflow_dispatch`
+    でのみ実行し、PR では skip される。`npm Overrides Registry` は PR でも実行されるが、
+    `Yarn Resolutions Registry` と同じく非 required のまま運用する
   - 既存の `Dependency Audit` job 名は変更していないため、required checks の設定変更は不要
 - `Toolchain Version Check`（`.github/workflows/toolchain-version-check.yml`、[ADR 0014](../adr/0014-terraform-toolchain-version-standardization.md)）は
   新規追加のガードレールのため、現時点では required status checks に追加しない。

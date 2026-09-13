@@ -222,23 +222,52 @@ yarn の `resolutions` と同じ目的の機構として `overrides` があり�
 
 `overrides` の右辺は yarn 側と同じく修正版を下限とする range（`^1.8.0`）にします。
 再現性の固定は lockfile の仕事であり、右辺を完全固定すると同系統の次の修正版を拾えません。
+キーはパッケージ名そのものです（yarn の `pkg@npm:<range>` のような range 付きキーは、
+npm では親セレクタの書式であり上書き対象の指定には使いません）。
 
 ルートと skeleton は同じ devDependencies を持つため、片方だけに `overrides` を入れると
 Dependabot alerts の一方が open のまま残ります。**両方に同じ内容を入れます。**
 
-**削除できるかの判定手順**（yarn 側の stale チェックに相当する自動棚卸しは npm 側には無く、当面は手動確認です）:
+**台帳（サイドカー）**: `package.json` にはコメントを書けないため、セキュリティ起因の `overrides` は
+`scripts/ci/npm-overrides.json` に理由・対応 GHSA・経路（dependents）・適用先（directories）を必ず登録します。
+
+台帳は対象ディレクトリごとに分けず **1 ファイルにまとめ、エントリ側が `directories` で適用先を宣言します**。
+ルートと skeleton には同じ `overrides` を入れることが上記のとおり運用上の不変条件であり、
+台帳をディレクトリごとに分けると同じエントリを 2 回書くことになって、
+sync が防ごうとしている乖離を台帳自身が抱え込むためです。
+
+**非セキュリティ起因の overrides**: バージョン統一などで入れた overrides は advisory を持たないため
+台帳には登録できません。現時点では 1 件も無いため宣言ファイル自体を置いていませんが、
+必要になったら `scripts/ci/npm-overrides-non-security.json` を `pattern` / `directories` / `reason` の
+3 キーで作成すれば sync が読みます。こちらは棚卸し（stale）の対象外です。
+
+`package.json` の `overrides` に書かれた行は、**どちらか一方のファイルに必ず宣言されていなければなりません**
+（両方に書くのも fail）。`scripts/ci/npm-overrides-audit.mjs` が次の 2 つを検証します
+（ユニットテストは `scripts/ci/npm-overrides-audit.test.mjs`）。
+
+| チェック | 実行タイミング | 実行 job | 内容 |
+| --- | --- | --- | --- |
+| sync | 毎回（PR / 週次 / 手動） | `npm Overrides Registry` | 台帳と非セキュリティ宣言のスキーマ検証と、ルート / skeleton の `package.json` の overrides との**双方向**の同期（欠落・右辺不一致・未宣言の overrides・ネストした overrides で fail） |
+| stale（棚卸し） | 週次 schedule / 手動 | `npm Overrides Inventory` | 台帳の overrides を外した一時プロジェクトで lockfile を再解決（`npm install --package-lock-only --ignore-scripts`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかをディレクトリごとに実測する |
+
+yarn 側と同じく、sync / stale はどちらも audit ゲート（`Dependency Audit` / `npm Dependency Audit`）とは
+別の job で実行し、`needs:` による依存も持たせません。同一 job の step にすると、step の `if:` に含まれる
+暗黙の `success()` により**ゲートが fail している間はこれらの検査が丸ごと skip**されるためです（Issue #255 / #257）。
+
+**削除条件**: stale チェックで advisory が再出現しなかった override は不要になっているため **fail** します。
+検出されたら `overrides` の該当行・lockfile の変更・台帳エントリを削除する PR を作ります。
+台帳未記載の High / Critical が管理対象パッケージに再出現した場合は警告に留めます
+（実グラフの `npm Dependency Audit` が本監視を担うため）。
+
+手元で同じ判定を再現する場合は次を実行します。
 
 ```bash
-# overrides の該当行を外して lockfile を再解決し、advisory が再出現するかを見る
-npm install --package-lock-only
-npm audit --audit-level=high
+node scripts/ci/npm-overrides-audit.mjs sync
+node scripts/ci/npm-overrides-audit.mjs stale
 ```
 
-0 件のままなら `overrides` は不要になっているため、該当行と lockfile の変更を削除する PR を作ります。
-
-この npm 依存グラフ（ルート / skeleton）は `npm Dependency Audit (root)` / `npm Dependency Audit (skeleton)` の
-2 job で毎 PR / 週次に監査されます（Issue #263）。overrides を外したときに advisory が再出現するかの
-自動棚卸し（yarn 側の stale チェックに相当）は別 Issue で扱います。
+この npm 依存グラフ（ルート / skeleton）自体は `npm Dependency Audit (root)` /
+`npm Dependency Audit (skeleton)` の 2 job で毎 PR / 週次に監査されます（Issue #263）。
 
 ## Dependabot の観測面
 
