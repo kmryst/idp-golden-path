@@ -1,0 +1,10 @@
+[
+  {
+    "pattern": "smol-toml",
+    "override": "^1.8.0",
+    "directories": [".", "backstage/templates/service-baseline/skeleton"],
+    "advisories": ["GHSA-7w5x-hrqm-74c2"],
+    "dependents": ["markdownlint-cli2@0.23.2"],
+    "reason": "markdownlint-cli2 0.23.2 が smol-toml 1.7.0 を exact pin しており、overrides なしで再解決しても脆弱バージョンが選ばれる。markdownlint-cli2 の最新も 0.23.2 で上げ先が無い（Issue #261）"
+  }
+]
