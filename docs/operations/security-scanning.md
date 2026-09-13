@@ -10,7 +10,7 @@ required status checks との関係は [branch-protection.md](./branch-protectio
 | workflow | 検出対象 | 実行タイミング | 検出時の扱い |
 | --- | --- | --- | --- |
 | [Gitleaks Secret Scan](../../.github/workflows/security-scan.yml) | git 履歴への secret / credential 混入 | PR | fail（required status check） |
-| [Dependency Audit](../../.github/workflows/dependency-audit.yml) | `backstage/` と reusable workflow 消費側の依存関係にある既知脆弱性（CVE） | PR / 週次（月曜 09:00 JST）/ 手動 | high 以上で fail、moderate 以下は警告のみ |
+| [Dependency Audit](../../.github/workflows/dependency-audit.yml) | `backstage/`（Yarn）、ルートと skeleton（npm）、および reusable workflow 消費側の依存関係にある既知脆弱性（CVE） | PR / 週次（月曜 09:00 JST）/ 手動 | high 以上で fail、moderate 以下は警告のみ |
 | [CodeQL](../../.github/workflows/codeql.yml) | コード起因の脆弱性（SAST） | PR / main push / 週次（月曜 09:00 JST） | Security > Code scanning alerts に集約（CI は解析失敗時のみ fail） |
 | [Trivy Image Scan](../../.github/workflows/trivy-image.yml) | コンテナイメージの中身（ベースイメージ由来の OS パッケージ・ランタイム同梱ライブラリ）の既知脆弱性 | 消費側の caller 次第（`workflow_call` 専用） | 既定は非 blocking。Security > Code scanning alerts と Step Summary に集約 |
 | [Trivy Config Scan](../../.github/workflows/trivy-config.yml) | IaC（Terraform）と Dockerfile の設定不備（misconfiguration） | PR | 既定は非 blocking。Step Summary + artifact |
@@ -39,9 +39,15 @@ Dependabot 自体の状態をどこから読むか（run ログ・alerts API・D
 
 ## Dependency Audit
 
-- 本リポジトリの対象: `backstage/`（Yarn workspaces）。ルートと skeleton の npm 依存（lint ツール類）は Dependabot の更新で追従する（依存更新で解消できない advisory の扱いは「[セキュリティ起因の npm overrides の運用](#セキュリティ起因の-npm-overrides-の運用)」を参照）
+- 本リポジトリの対象: 依存管理の 3 系統すべて（依存更新で解消できない advisory の扱いは「[セキュリティ起因の yarn resolutions の運用](#セキュリティ起因の-yarn-resolutions-の運用)」「[セキュリティ起因の npm overrides の運用](#セキュリティ起因の-npm-overrides-の運用)」を参照）
+
+  | 対象 | package manager | 実行 job | コマンド |
+  | --- | --- | --- | --- |
+  | `backstage/` | Yarn workspaces | `Dependency Audit` | `yarn npm audit --all --recursive`（全 workspace + 推移的依存を監査） |
+  | リポジトリルート | npm | `npm Dependency Audit (root)` | `npm audit --package-lock-only`（prod / dev / optional / peer を含む全依存を監査） |
+  | `backstage/templates/service-baseline/skeleton/` | npm | `npm Dependency Audit (skeleton)` | 同上 |
+
 - reusable workflow 消費側の対象: `package-manager`（npm / Yarn）と `working-directory` input で指定された依存グラフ
-- 本リポジトリのコマンド: `yarn npm audit --all --recursive`（全 workspace + 推移的依存を監査）
 - schedule 実行があるため、PR が無い期間に公開された新規 CVE も週次で検出できる
 
 ### severity 閾値と fail/warn ポリシー
@@ -53,6 +59,19 @@ Dependabot 自体の状態をどこから読むか（run ログ・alerts API・D
 
 moderate 以下を fail させないのは、Backstage 本体の依存グラフが大きく、
 修正版が上流に存在しない低 severity の検出で PR が恒常的にブロックされるのを避けるためです。
+
+**ルートと skeleton（npm）も `backstage/` と同じ high 閾値**にし、対象ごとに緩めません。理由は次のとおりです。
+
+- skeleton は Scaffolder が生成する**全サービスに伝播する配布物**で、ここに残した脆弱依存はそのまま
+  各サービスの初期状態になる。プラットフォームが配る雛形は本体と同格の厳しさで扱う
+- ルートと skeleton は同じ devDependencies（markdownlint-cli2 / commitlint）を持つため、
+  ルートだけ閾値を緩めても skeleton 側のゲートが同じ advisory で落ちる。
+  閾値を分けると「同じ依存なのに片方だけ赤い」状態になり、運用上の判断が複雑になるだけで実効がない
+- ルートは本番に載らない dev ツールだが、リポジトリ運用の CI と開発者のローカル環境で実行される。
+  実行されない依存ではないため、本番非搭載を理由に緩める根拠にならない
+
+高頻度の誤検知で運用が回らなくなった場合は、閾値を緩めるのではなく、
+既存の期限付き例外（GHSA + expires + tracking Issue）と同じ枠組みで個別に扱います。
 
 ### 検出時の対応フロー
 
@@ -217,8 +236,9 @@ npm audit --audit-level=high
 
 0 件のままなら `overrides` は不要になっているため、該当行と lockfile の変更を削除する PR を作ります。
 
-なお、この npm 依存グラフ（ルート / skeleton）は `Dependency Audit` の監査対象ではなく（対象は `backstage/` の Yarn）、
-検出は Dependabot alerts に依存しています。npm 側の audit ゲート追加と棚卸し機構は別 Issue で扱います。
+この npm 依存グラフ（ルート / skeleton）は `npm Dependency Audit (root)` / `npm Dependency Audit (skeleton)` の
+2 job で毎 PR / 週次に監査されます（Issue #263）。overrides を外したときに advisory が再出現するかの
+自動棚卸し（yarn 側の stale チェックに相当）は別 Issue で扱います。
 
 ## Dependabot の観測面
 
@@ -444,12 +464,14 @@ blocking 化（`exit-code: '1'` / required status check 昇格）は、finding �
 
 ## required status checks との関係
 
-現時点では Dependency Audit / CodeQL / Trivy Config Scan / Trivy Image Scan Selftest を
+現時点では Dependency Audit / npm Dependency Audit / CodeQL / Trivy Config Scan / Trivy Image Scan Selftest を
 required status checks に**昇格させません**
 （[branch-protection.md](./branch-protection.md) の required checks は従来どおり）。
 
 - Dependency Audit の fail 要因（新規公開 CVE）は PR の変更内容と無関係に発生するため、
   required にすると無関係な PR が突然マージ不能になる。まず非 required で運用し、検出頻度を見てから昇格を判断する
+- `npm Dependency Audit (root)` / `npm Dependency Audit (skeleton)` も同じ理由で昇格させない。
+  昇格するなら `Dependency Audit` と合わせて判断する
 - CodeQL は alert 集約型で、PR ブロックには branch protection 側の Code scanning 設定が別途必要。こちらも運用実績を見てから判断する
 - Trivy Config Scan は既定が非 blocking（`exit-code: '0'`）で、finding が未棚卸しのため昇格させない
 - Trivy Image Scan Selftest は paths filter 付きで実行されるため、required にすると

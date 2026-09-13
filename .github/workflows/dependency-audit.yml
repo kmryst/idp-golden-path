@@ -332,6 +332,73 @@ jobs:
           node
           "$GITHUB_WORKSPACE/.idp-golden-path-workflow/scripts/ci/npm-audit-policy.mjs"
 
+  # ルート（リポジトリ運用の lint / commitlint ツール）と skeleton（Scaffolder が新規サービスに
+  # 配る雛形）の npm 依存グラフの audit ゲート。本リポジトリ固有のチェックであり消費側では実行しない
+  # （消費側は package-manager: npm と working-directory input で dependency-audit job を使う）。
+  # 本リポジトリ自身は workflow_call の caller を持たないため、Issue #110 が想定した
+  # 「caller 側で working-directory を変えて複数回呼び出す」方式は使えない。
+  # 代わりに matrix で 2 ディレクトリを独立した job として走らせる。
+  # 1 ディレクトリずつ独立させているのは、同一 job の step にすると step の暗黙の success() で
+  # 「ルートが落ちている間は skeleton が skip される」従属関係が生まれるため（Issue #255 / #257）。
+  # 同じ理由で dependency-audit job への needs: も付けない。
+  # 閾値は backstage/（Yarn）と同じく high 以上で fail（正本: docs/operations/security-scanning.md）
+  npm-dependency-audit:
+    name: npm Dependency Audit (${{ matrix.target.label }})
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path'
+      }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - label: root
+            directory: "."
+          - label: skeleton
+            directory: backstage/templates/service-baseline/skeleton
+    defaults:
+      run:
+        working-directory: ${{ matrix.target.directory }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # 全 severity のレポート（fail させない可視化用）
+      # npm audit は package-lock.json のみで動作し、事前の npm ci は不要
+      - name: Audit report (all severities, warn only)
+        run: |
+          {
+            echo "## npm Dependency Audit — ${{ matrix.target.label }} (all severities)"
+            echo ""
+            echo '```'
+            npm audit \
+              --package-lock=true \
+              --package-lock-only=true \
+              --include=prod \
+              --include=dev \
+              --include=optional \
+              --include=peer || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Audit gate (fail on high or critical)
+        run: >-
+          npm audit
+          --package-lock=true
+          --package-lock-only=true
+          --include=prod
+          --include=dev
+          --include=optional
+          --include=peer
+          --audit-level=high
+
   # セキュリティ起因 resolutions の台帳（scripts/ci/yarn-resolutions.json）と
   # backstage/package.json の同期検証。本リポジトリ固有のチェックであり消費側では実行しない。
   # yarn-resolutions-inventory と同じ理由で dependency-audit job から独立させている:
