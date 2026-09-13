@@ -39,7 +39,7 @@ Dependabot 自体の状態をどこから読むか（run ログ・alerts API・D
 
 ## Dependency Audit
 
-- 本リポジトリの対象: `backstage/`（Yarn workspaces）。ルートの npm 依存（lint ツール類）は Dependabot の更新で追従する
+- 本リポジトリの対象: `backstage/`（Yarn workspaces）。ルートと skeleton の npm 依存（lint ツール類）は Dependabot の更新で追従する（依存更新で解消できない advisory の扱いは「[セキュリティ起因の npm overrides の運用](#セキュリティ起因の-npm-overrides-の運用)」を参照）
 - reusable workflow 消費側の対象: `package-manager`（npm / Yarn）と `working-directory` input で指定された依存グラフ
 - 本リポジトリのコマンド: `yarn npm audit --all --recursive`（全 workspace + 推移的依存を監査）
 - schedule 実行があるため、PR が無い期間に公開された新規 CVE も週次で検出できる
@@ -188,6 +188,37 @@ warn ではなく fail とする）。検出されたら resolutions の該当�
 棚卸しを毎 PR ではなく週次にするのは、判定材料（上流のリリース）が週次でしか変わらず、
 依存グラフ全体の再解決コストを毎 PR で払う価値がないため。台帳未記載の High / Critical が
 管理対象パッケージに再出現した場合は警告に留める（実グラフの週次 audit ゲートが本監視を担う）。
+
+### セキュリティ起因の npm overrides の運用
+
+npm 側（ルートの `package.json` と `backstage/templates/service-baseline/skeleton/package.json`）にも、
+yarn の `resolutions` と同じ目的の機構として `overrides` があります。追加基準は yarn 側と同一です
+（修正版が依存元の宣言 range と同一 major 内に存在し、再解決しても修正版が選ばれず、適用後の動作を実測確認できること）。
+
+現在の登録内容:
+
+| override | 対応 advisory | 追加理由 | 削除条件 |
+| --- | --- | --- | --- |
+| `smol-toml: ^1.8.0` | [GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2)（high） | `markdownlint-cli2@0.23.2` が `"smol-toml": "1.7.0"` と exact pin しており、`markdownlint-cli2@latest` も 0.23.2 で上げ先が無いため、依存更新では解消できない（Issue #261） | `markdownlint-cli2` が smol-toml 1.7.1 以降を要求するようになったら不要 |
+
+`overrides` の右辺は yarn 側と同じく修正版を下限とする range（`^1.8.0`）にします。
+再現性の固定は lockfile の仕事であり、右辺を完全固定すると同系統の次の修正版を拾えません。
+
+ルートと skeleton は同じ devDependencies を持つため、片方だけに `overrides` を入れると
+Dependabot alerts の一方が open のまま残ります。**両方に同じ内容を入れます。**
+
+**削除できるかの判定手順**（yarn 側の stale チェックに相当する自動棚卸しは npm 側には無く、当面は手動確認です）:
+
+```bash
+# overrides の該当行を外して lockfile を再解決し、advisory が再出現するかを見る
+npm install --package-lock-only
+npm audit --audit-level=high
+```
+
+0 件のままなら `overrides` は不要になっているため、該当行と lockfile の変更を削除する PR を作ります。
+
+なお、この npm 依存グラフ（ルート / skeleton）は `Dependency Audit` の監査対象ではなく（対象は `backstage/` の Yarn）、
+検出は Dependabot alerts に依存しています。npm 側の audit ゲート追加と棚卸し機構は別 Issue で扱います。
 
 ## Dependabot の観測面
 
