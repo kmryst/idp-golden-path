@@ -26,5 +26,15 @@
       ]
     },
     "tracking": "https://github.com/kmryst/idp-golden-path/issues/291"
+  },
+  {
+    "pattern": "minimist@npm:^1.2.6",
+    "reason": "Issue #291 の検証用。lock のキーが変わる resolutions で、外すと lock が変わる（Draft になる）状態を意図的に作る",
+    "probe": {
+      "up": [
+        "minimist"
+      ]
+    },
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/291"
   }
 ]

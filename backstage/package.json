@@ -58,7 +58,8 @@
     "js-yaml@npm:=4.3.1": "^4.3.2",
     "undici@npm:7.28.0": "^7.29.0",
     "@yarnpkg/core/got": "npm:11.8.2",
-    "prettier@npm:^3.9.6": "^3.9.6"
+    "prettier@npm:^3.9.6": "^3.9.6",
+    "minimist@npm:^1.2.6": "^1.2.8"
   },
   "prettier": "@backstage/cli/config/prettier",
   "lint-staged": {
