@@ -97,8 +97,9 @@ PR が作られ、PAT の有効期限管理と権限の広さが問題になる�
 ADR-0007 の結論（Scaffolder は PAT を継続する）は変えない。
 
 `actions/create-github-app-token` v3 は `app-id` 入力を deprecated にし `client-id` を推奨している（`action.yml` の
-`deprecationMessage: "Use 'client-id' instead."`）。現在登録済みの variable は App ID（`DEPENDENCY_BOT_APP_ID`）なので
-`app-id` を使う。`client-id` への切り替えは variable `DEPENDENCY_BOT_CLIENT_ID` の追加とあわせて行う。
+`deprecationMessage: "Use 'client-id' instead."`）。推奨に従い、App の Client ID を variable `DEPENDENCY_BOT_CLIENT_ID` に登録して
+`client-id` で渡す。実装の途中で `app-id`（variable `DEPENDENCY_BOT_APP_ID`）でも検証したが、run ごとに deprecation の warning 注釈が出るため
+切り替えた。`DEPENDENCY_BOT_APP_ID` は使われなくなるので、main へのマージ後に削除する。
 
 ### 5. job の分割: probe と PR 作成を分ける（採択） / 1 job で完結
 

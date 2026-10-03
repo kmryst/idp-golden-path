@@ -95,6 +95,21 @@ PR Policy Check と Commitlint が 2 回ずつあるのは、`synchronize`（bra
 GitHub App のトークンで作った PR で `pull_request` イベントが発火し、ラベル・`Refs #291`・Conventional Commits のタイトルで
 4 つの必須チェックがすべて通ることを確認した。
 
+## 追記: App トークンの発行を `app-id` から `client-id` に切り替えた再検証
+
+ケース 1〜4 の run は `app-id: ${{ vars.DEPENDENCY_BOT_APP_ID }}` で実行しており、`Yarn Resolutions Removal PR` job に
+`##[warning]Input 'app-id' has been deprecated with message: Use 'client-id' instead.` の注釈が出ていた。
+variable `DEPENDENCY_BOT_CLIENT_ID` を登録した上で `client-id: ${{ vars.DEPENDENCY_BOT_CLIENT_ID }}` に変え、
+検証ブランチ（commit `41e8d39`）でケース 2 を再実行した。
+
+| 項目 | 値 |
+| --- | --- |
+| run | [37108580075](https://github.com/kmryst/idp-golden-path/actions/runs/37108580075) |
+| `Yarn Resolutions Removal PR` | success。トークン発行 → `Updated pull request #292`、`pull-request-operation = updated`（base が進んでいたため）、head `556ea59` |
+| deprecation の注釈 | 消えた。job の annotation は runner image 移行の notice 1 件のみ |
+
+`DEPENDENCY_BOT_APP_ID` は使われなくなったため、main へのマージ後に削除する。
+
 ## 確認できていないこと
 
 - 対照の実行（行を残した `yarn up -R`）が失敗する経路を CI 上では踏んでいない（ユニットテストとローカルの `probe.up` 検査で代替）

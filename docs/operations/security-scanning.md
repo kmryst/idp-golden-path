@@ -265,7 +265,9 @@ schedule を Dependabot（月曜 09:15 JST、job は 09:38 JST ごろ完了）�
 `Yarn Resolutions Removal PR` は App のトークンを持つが install は実行せず、artifact の差分を適用して commit / PR 作成だけを行う。
 依存解決は未検証の上流パッケージを引くため、書き込みトークンと同じ job に置かない。
 
-**GitHub App の秘密鍵**: variable `DEPENDENCY_BOT_APP_ID` と secret `DEPENDENCY_BOT_PRIVATE_KEY` に登録する。
+**GitHub App の認証情報**: variable `DEPENDENCY_BOT_CLIENT_ID`（App の Client ID。secret ではない）と
+secret `DEPENDENCY_BOT_PRIVATE_KEY`（秘密鍵）に登録する。導入時に使った variable `DEPENDENCY_BOT_APP_ID` は使われなくなったため、
+Issue #291 の PR の main へのマージ後に削除する。
 ローテーションと漏洩時の失効手順は ADR-0015 の「影響」節を正本とする。
 
 **新しい非セキュリティ起因の resolutions を追加するとき**: 解除条件が「上流のリリース待ち」なら `probe` と `tracking` を書く。

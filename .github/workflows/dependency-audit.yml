@@ -567,14 +567,13 @@ jobs:
           git --no-pager diff --stat
         id: apply
 
-      # actions/create-github-app-token v3 は app-id 入力を deprecated にし client-id を推奨している。
-      # 現在登録済みの variable は App ID（DEPENDENCY_BOT_APP_ID）のため app-id を使う。
-      # client-id への切り替えは variable の追加（DEPENDENCY_BOT_CLIENT_ID）とあわせて行う
+      # actions/create-github-app-token v3 は app-id 入力を deprecated にしており、
+      # 推奨の client-id（App の Client ID。secret ではない）を variable から渡す
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.DEPENDENCY_BOT_APP_ID }}
+          client-id: ${{ vars.DEPENDENCY_BOT_CLIENT_ID }}
           private-key: ${{ secrets.DEPENDENCY_BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
