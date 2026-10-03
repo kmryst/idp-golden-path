@@ -13,6 +13,7 @@ import {
   renderProbeSummary,
   renderRemovalPullRequestBody,
   renderResolutionsSummary,
+  summarizeYarnFailure,
 } from "./yarn-resolutions-audit.mjs";
 
 const GHSA = "GHSA-4cwx-7wf7-3272";
@@ -465,6 +466,26 @@ test("rejects probe targets that yarn up -R would match vacuously", () => {
       `target ${target} should be rejected`,
     );
   }
+});
+
+test("summarizes a yarn failure by its report lines instead of the stack trace tail", () => {
+  const stdout = [
+    "➤ YN0000: ┌ Resolution step",
+    "➤ YN0001: │ Error: got@patch:got@npm%3A11.8.2#~/.yarn/patches/got.patch: ENOENT: no such file or directory",
+    "    at Object.openSync (node:fs:573:18)",
+    "    at bundled (/tmp/x/.yarn/releases/yarn-4.13.0.cjs:1:12345)",
+    "➤ YN0000: └ Completed",
+    "➤ YN0000: · Failed with errors in 0s 42ms",
+  ].join("\n");
+
+  const summary = summarizeYarnFailure(stdout, "");
+  assert.match(summary, /YN0001: │ Error: got@patch/);
+  assert.match(summary, /Failed with errors/);
+  assert.doesNotMatch(summary, /at Object.openSync/);
+  assert.doesNotMatch(summary, /yarn-4.13.0.cjs/);
+
+  // 報告行が無いときだけ末尾を返す
+  assert.equal(summarizeYarnFailure("plain tail\n", ""), "plain tail");
 });
 
 test("classifies a probe as removable only when the control run passed", () => {

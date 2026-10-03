@@ -664,6 +664,22 @@ function buildUnpinnedProject(registry) {
   );
 }
 
+// Yarn は失敗理由を stdout の `➤ YN0001: │ Error: ...` 行に書き、致命的エラーでは
+// その後にバンドル済みソースのスタックトレースを吐く。末尾を切り出すとトレースだけが
+// 残って原因が読めないため（run 37107421095 で実測）、報告行を優先して抜き出す
+export function summarizeYarnFailure(stdout, stderr) {
+  const reportLines = `${stdout}\n${stderr}`
+    .split("\n")
+    .filter((line) => /YN\d{4}:|Error:|error/i.test(line) && !/^\s*at /.test(line))
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .slice(0, 10);
+  if (reportLines.length > 0) {
+    return reportLines.join(" | ").slice(0, 2000);
+  }
+  return `${stdout}${stderr}`.trim().slice(-1000);
+}
+
 function runYarn(args, cwd) {
   const result = spawnSync("yarn", args, {
     cwd,
@@ -707,7 +723,7 @@ function runSecurityStale(registry) {
     const install = runYarn(["install", "--mode=update-lockfile"], tempDir);
     if (install.status !== 0) {
       throw new AuditPolicyError(
-        `yarn install --mode=update-lockfile failed with status ${String(install.status)}: ${(install.stdout + install.stderr).slice(-2000)}`,
+        `yarn install --mode=update-lockfile failed with status ${String(install.status)}: ${summarizeYarnFailure(install.stdout, install.stderr)}`,
       );
     }
 
@@ -750,7 +766,9 @@ function runProbe(manifest, entry) {
     const control = runYarn(args, controlDir);
     controlStatus = control.status;
     if (controlStatus !== 0) {
-      process.stderr.write(control.stdout.slice(-2000));
+      process.stderr.write(
+        `${summarizeYarnFailure(control.stdout, control.stderr)}\n`,
+      );
     }
   } finally {
     rmSync(controlDir, { recursive: true, force: true });
@@ -789,7 +807,7 @@ function writeRemoval(manifest, nonSecurity, removable, outputDir) {
     const install = runYarn(["install", "--mode=update-lockfile"], tempDir);
     if (install.status !== 0) {
       throw new AuditPolicyError(
-        `yarn install --mode=update-lockfile without the removable resolutions failed with status ${String(install.status)}: ${(install.stdout + install.stderr).slice(-2000)}`,
+        `yarn install --mode=update-lockfile without the removable resolutions failed with status ${String(install.status)}: ${summarizeYarnFailure(install.stdout, install.stderr)}`,
       );
     }
 
