@@ -110,9 +110,36 @@ variable `DEPENDENCY_BOT_CLIENT_ID` を登録した上で `client-id: ${{ vars.D
 
 `DEPENDENCY_BOT_APP_ID` は使われなくなったため、main へのマージ後に削除する。
 
+## 追記: artifact の信頼境界の見直し（ADR-0015 選択肢 8）後の再検証
+
+PR #293 の Codex レビューを受けて、probe job から PR 作成 job へ渡すものを `removal.json`（外す pattern の一覧と `lockfileChanges`）だけにし、
+PR 作成 job が信頼できる checkout から差分と本文を生成する形に変えた（実装ブランチ commit `e5d47eb`、Draft 対応 `a7b892a`）。
+変更後の仕組みで、既存の 4 ケースと改ざん拒否 3 ケース、Draft の切り替えを再確認した。
+検証ブランチは 2 本（`291-verify-removal-pr-2`: ケース 2 / 4 / Draft、`291-verify-tamper`: 改ざん・故障注入を `workflow_dispatch` の入力で選ぶ）。
+
+| ケース | run | 結果 |
+| --- | --- | --- |
+| 1. 外せない状態（実装ブランチ `e5d47eb`） | [37126648319](https://github.com/kmryst/idp-golden-path/actions/runs/37126648319) | Inventory 緑、Removal PR job skipped |
+| 2. 外せる状態（no-op の `prettier@npm:^3.9.6`、lock は変わらない） | [37126788304](https://github.com/kmryst/idp-golden-path/actions/runs/37126788304) | `removing prettier@npm:^3.9.6 (lockfile changes: false)` → [PR #294](https://github.com/kmryst/idp-golden-path/pull/294) created、**通常の PR（draft=false）**。差分は `backstage/package.json` +1 -2 と台帳 +0 -10 のみ（lock なし） |
+| 4. 自動 PR 上の必須チェック | #294（4 ワークフローの `branches:` に検証ブランチを一時追加） | PR Policy Check / Commitlint / Markdown Lint / Gitleaks Secret Scan すべて success |
+| Draft: lock が変わる resolutions（`minimist@npm:^1.2.6` → `^1.2.8`、lock のキーが変わる）を追加 | [37126889856](https://github.com/kmryst/idp-golden-path/actions/runs/37126889856) | `lockfile changes: true` → `draft: always-true` → `Updated pull request #294` → `Converting pull request to draft`。**#294 が Draft になり**、本文冒頭が「この PR は Draft です。`backstage/` で `yarn install` を実行して `yarn.lock` をコミットしてから Ready for review にする」になった |
+| Draft → 通常: 上記を revert | [37126991153](https://github.com/kmryst/idp-golden-path/actions/runs/37126991153) | `lockfile changes: false` → `draft: false`、`pull-request-operation = updated`。本文は「lock は変わらない」に戻るが、**#294 は Draft のまま**（action は Draft を Ready に戻さない。`src/create-pull-request.ts` に Ready 化のコードパスが無いことと一致） |
+| 改ざん 1: artifact に `backstage/package.json`（`postinstall` 入り）を追加 | [37127013461](https://github.com/kmryst/idp-golden-path/actions/runs/37127013461) | Removal PR job 赤: `removal artifact must contain only removal.json (found: package.json, removal.json)`。PR は作られず #294 も更新されない |
+| 改ざん 2: `removal.json` の pattern を probe なしの `@types/react` に差し替え | [37127019056](https://github.com/kmryst/idp-golden-path/actions/runs/37127019056) | 赤: `@types/react has no probe in yarn-resolutions-non-security.json; refusing to remove it` |
+| 改ざん 3: `removal.json` に余分なフィールド `manifest` を追加 | [37127024866](https://github.com/kmryst/idp-golden-path/actions/runs/37127024866) | 赤: `removal request must contain exactly patterns and lockfileChanges` |
+| 3. 故障注入（`YARN_NPM_REGISTRY_SERVER=https://registry.invalid`） | [37127030675](https://github.com/kmryst/idp-golden-path/actions/runs/37127030675) | Inventory 赤: `yarn install --mode=update-lockfile failed with status 1: ... YN0001: │ Error [ERR_SOCKET_CLOSED_BEFORE_CONNECTION] ...`（報告行が読める形になった）。Removal PR job skipped |
+
+改ざん 3 ケースはユニットテストでも確認している（`parseRemovalRequest` / `assertRemovalArtifactFiles` / `authorizeRemoval`、計 73 件 pass）。
+
+### 後片付け（追加分）
+
+PR #294（close）、ブランチ `dependency-bot/yarn-resolutions-removal`、`291-verify-removal-pr-2`、`291-verify-tamper`、
+worktree `idp-golden-path-291-verify2` / `idp-golden-path-291-tamper`。
+
 ## 確認できていないこと
 
 - 対照の実行（行を残した `yarn up -R`）が失敗する経路を CI 上では踏んでいない（ユニットテストとローカルの `probe.up` 検査で代替）
+- ケース 1〜4 の最初の記録（run 37107093481 ほか）は、artifact に差分ファイルを載せていた旧実装のもの。現行の実装での結果は上の追記を正とする
 - 実際に上流（berry#7281）が修正されたときの `@yarnpkg/core/got` の撤去 PR は、自然発生を待つ
 
 ## 後片付け
