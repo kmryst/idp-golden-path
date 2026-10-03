@@ -16,5 +16,15 @@
       ]
     },
     "tracking": "https://github.com/yarnpkg/berry/issues/7281"
+  },
+  {
+    "pattern": "prettier@npm:^3.9.6",
+    "reason": "Issue #291 の検証用。既存の range と同じ右辺の no-op resolutions で、probe が必ず通る（解除可能、lock は変わらない）状態を意図的に作る",
+    "probe": {
+      "up": [
+        "prettier"
+      ]
+    },
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/291"
   }
 ]
