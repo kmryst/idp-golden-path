@@ -353,8 +353,109 @@ export function renderProbeSummary(results, skipped) {
 }
 
 // 撤去 PR の本文。PR テンプレート（.github/pull_request_template.md）の見出しに揃える
+// ---- probe job（secret なし）と PR 作成 job（App トークンあり）の境界 ----
+//
+// 2 つの job の間を渡るのは artifact の removal.json 1 ファイルだけで、内容は
+// 「外す resolutions の pattern 一覧」と「lockfile が変わるか」の真偽値に限る。
+// probe job では `yarn up -R` が上流の最新を引くため、git 依存の prepare など
+// 任意コードが動く余地があり（現状の yarn.lock に git 依存は 0 件だが上流の変更で開く）、
+// そこで作られたファイル（package.json・台帳・lockfile・PR 本文）を信用して
+// App 名義の PR に入れてはならない（PR #293 の Codex レビュー、ADR-0015 選択肢 8）。
+// PR 作成 job は信頼できる checkout から package.json・台帳・PR 本文を自分で生成し、
+// pattern は台帳の probe 付きエントリで package.json にも存在するものだけを許可する。
+// lockfile は PR に含めず、変わる場合は人が `yarn install` を 1 コミット足す（案 A）
+export const REMOVAL_REQUEST_FILENAME = "removal.json";
+
+export function parseRemovalRequest(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new AuditPolicyError(
+      `removal request must be valid JSON: ${error.message}`,
+    );
+  }
+
+  if (!isRecord(parsed)) {
+    throw new AuditPolicyError("removal request must be a JSON object");
+  }
+  const keys = Object.keys(parsed).sort();
+  if (keys.length !== 2 || keys[0] !== "lockfileChanges" || keys[1] !== "patterns") {
+    throw new AuditPolicyError(
+      "removal request must contain exactly patterns and lockfileChanges",
+    );
+  }
+  if (
+    !Array.isArray(parsed.patterns) ||
+    parsed.patterns.length === 0 ||
+    parsed.patterns.some(
+      (pattern) => typeof pattern !== "string" || pattern.trim() === "",
+    )
+  ) {
+    throw new AuditPolicyError(
+      "removal request patterns must be a non-empty array of resolution keys",
+    );
+  }
+  if (new Set(parsed.patterns).size !== parsed.patterns.length) {
+    throw new AuditPolicyError("removal request patterns contains duplicates");
+  }
+  if (typeof parsed.lockfileChanges !== "boolean") {
+    throw new AuditPolicyError(
+      "removal request lockfileChanges must be a boolean",
+    );
+  }
+
+  return { patterns: [...parsed.patterns], lockfileChanges: parsed.lockfileChanges };
+}
+
+// artifact に removal.json 以外のファイルがあれば、probe job が差分や本文を
+// 持ち込もうとしているとみなして拒否する
+export function assertRemovalArtifactFiles(files) {
+  const sorted = [...files].sort();
+  if (sorted.length !== 1 || sorted[0] !== REMOVAL_REQUEST_FILENAME) {
+    throw new AuditPolicyError(
+      `removal artifact must contain only ${REMOVAL_REQUEST_FILENAME} (found: ${
+        sorted.length === 0 ? "nothing" : sorted.join(", ")
+      })`,
+    );
+  }
+}
+
+// 信頼できる checkout の台帳と package.json で pattern を許可リスト照合する。
+// probe 付きの非セキュリティ宣言で、package.json にも存在するものだけを通す
+export function authorizeRemoval(request, nonSecurity, manifestResolutions) {
+  if (!isRecord(manifestResolutions)) {
+    throw new AuditPolicyError(
+      "backstage/package.json resolutions must be an object",
+    );
+  }
+  const byPattern = new Map(nonSecurity.map((entry) => [entry.pattern, entry]));
+
+  return request.patterns.map((pattern) => {
+    const entry = byPattern.get(pattern);
+    if (entry === undefined) {
+      throw new AuditPolicyError(
+        `${pattern} is not declared in yarn-resolutions-non-security.json; refusing to remove it`,
+      );
+    }
+    if (entry.probe === undefined) {
+      throw new AuditPolicyError(
+        `${pattern} has no probe in yarn-resolutions-non-security.json; refusing to remove it`,
+      );
+    }
+    const resolution = manifestResolutions[pattern];
+    if (resolution === undefined) {
+      throw new AuditPolicyError(
+        `${pattern} is not present in package.json resolutions; refusing to remove it`,
+      );
+    }
+    return { entry, resolution };
+  });
+}
+
 export function renderRemovalPullRequestBody(removable, options = {}) {
   const runUrl = options.runUrl ?? null;
+  const lockfileChanges = options.lockfileChanges === true;
   const lines = [
     "## 目的",
     "",
@@ -375,9 +476,21 @@ export function renderRemovalPullRequestBody(removable, options = {}) {
     "## 変更内容",
     "",
     "- `backstage/package.json` の `resolutions` から上記の行を削除",
-    "- `backstage/yarn.lock` を `yarn install --mode=update-lockfile` で再解決",
     "- `scripts/ci/yarn-resolutions-non-security.json` から上記のエントリを削除",
+    "- `backstage/yarn.lock` は変更しない（probe job の成果物を信用しないため。ADR-0015）",
     "",
+    ...(lockfileChanges
+      ? [
+          "> [!IMPORTANT]",
+          "> probe の実測では、この resolutions を外すと `backstage/yarn.lock` が変わる。",
+          "> このままでは Backstage CI の `yarn install --immutable` が赤になるため、",
+          "> **この branch を checkout し、`backstage/` で `yarn install` を実行して lock をコミットする**必要がある。",
+          "",
+        ]
+      : [
+          "probe の実測では、この resolutions を外しても `backstage/yarn.lock` は変わらない。",
+          "",
+        ]),
     "## 影響範囲",
     "",
     "- **対象**: `backstage/` の依存解決（上記 resolutions が効いていた依存のみ）",
@@ -391,7 +504,7 @@ export function renderRemovalPullRequestBody(removable, options = {}) {
     "",
     "## メモ（レビューポイント）",
     "",
-    "- この PR は Dependency Audit ワークフローの Yarn Resolutions Inventory が自動作成した（正本: `docs/operations/security-scanning.md`、設計判断: ADR-0015）",
+    "- この PR は Dependency Audit ワークフローの Yarn Resolutions Inventory が自動作成した（正本: `docs/operations/security-scanning.md`、設計判断: ADR-0015）。差分は PR 作成 job が信頼できる checkout から生成しており、probe job からは外す pattern の一覧だけを受け取っている",
     "- 再実行しても同じブランチが更新され、PR は重複しない",
     "- 解除条件の判断材料は Tracking 列の Issue を参照する。上流の修正内容と一致しているか確認してからマージする",
     "",
@@ -795,14 +908,15 @@ function runProbe(manifest, entry) {
 // 解除可能な resolutions を外した package.json で lockfile を再解決し、
 // 撤去 PR の差分（backstage/package.json・backstage/yarn.lock・非セキュリティ宣言・PR 本文）
 // を outputDir に書き出す。lockfile の再解決が通らない場合は機構の故障として fail する
-function writeRemoval(manifest, nonSecurity, removable, outputDir) {
-  const removed = applyRemoval(
-    manifest,
-    nonSecurity,
-    removable.map((item) => item.entry.pattern),
-  );
+// probe job 側の出力。外す pattern の一覧と「lockfile が変わるか」だけを removal.json に書く。
+// lockfile の再解決が通らない場合は機構の故障として fail する。
+// 再解決した lockfile 自体は artifact に入れない（PR 作成 job が信用しないため）
+function writeRemovalRequest(manifest, nonSecurity, removable, outputDir) {
+  const patterns = removable.map((item) => item.entry.pattern);
+  const removed = applyRemoval(manifest, nonSecurity, patterns);
 
   const tempDir = buildTempProject(removed.manifest, "yarn-resolutions-removal-");
+  let lockfileChanges;
   try {
     const install = runYarn(["install", "--mode=update-lockfile"], tempDir);
     if (install.status !== 0) {
@@ -810,39 +924,86 @@ function writeRemoval(manifest, nonSecurity, removable, outputDir) {
         `yarn install --mode=update-lockfile without the removable resolutions failed with status ${String(install.status)}: ${summarizeYarnFailure(install.stdout, install.stderr)}`,
       );
     }
-
-    mkdirSync(join(outputDir, "backstage"), { recursive: true });
-    mkdirSync(join(outputDir, "scripts", "ci"), { recursive: true });
-    writeFileSync(
-      join(outputDir, "backstage", "package.json"),
-      `${JSON.stringify(removed.manifest, null, 2)}\n`,
-      "utf8",
-    );
-    cpSync(join(tempDir, "yarn.lock"), join(outputDir, "backstage", "yarn.lock"));
-    writeFileSync(
-      join(outputDir, "scripts", "ci", "yarn-resolutions-non-security.json"),
-      `${JSON.stringify(removed.nonSecurity, null, 2)}\n`,
-      "utf8",
-    );
-
-    const { GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID } = process.env;
-    const runUrl =
-      GITHUB_SERVER_URL && GITHUB_REPOSITORY && GITHUB_RUN_ID
-        ? `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`
-        : null;
-    writeFileSync(
-      join(outputDir, "pull-request-body.md"),
-      renderRemovalPullRequestBody(removable, { runUrl }),
-      "utf8",
-    );
-    writeFileSync(
-      join(outputDir, "pull-request-title.txt"),
-      `${REMOVAL_PR_TITLE}\n`,
-      "utf8",
-    );
+    lockfileChanges =
+      readFileSync(join(tempDir, "yarn.lock"), "utf8") !==
+      readFileSync(join(PROJECT_DIR, "yarn.lock"), "utf8");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(
+    join(outputDir, REMOVAL_REQUEST_FILENAME),
+    `${JSON.stringify({ patterns, lockfileChanges }, null, 2)}\n`,
+    "utf8",
+  );
+  return lockfileChanges;
+}
+
+// PR 作成 job 側。artifact（IDP_RESOLUTIONS_REMOVAL_DIR）の removal.json を検証し、
+// 信頼できる checkout の台帳・package.json と照合した上で、作業ツリーの
+// backstage/package.json と台帳を書き換え、PR 本文とタイトルを IDP_RESOLUTIONS_PR_DIR に書く
+function runApplyRemoval() {
+  const requestDir = process.env.IDP_RESOLUTIONS_REMOVAL_DIR;
+  const prDir = process.env.IDP_RESOLUTIONS_PR_DIR;
+  if (!requestDir || !prDir) {
+    throw new AuditPolicyError(
+      "apply-removal requires IDP_RESOLUTIONS_REMOVAL_DIR and IDP_RESOLUTIONS_PR_DIR",
+    );
+  }
+
+  assertRemovalArtifactFiles(
+    readdirSync(requestDir, { recursive: true, withFileTypes: true })
+      .filter((dirent) => !dirent.isDirectory())
+      .map((dirent) => dirent.name),
+  );
+  const request = parseRemovalRequest(
+    readFileSync(join(requestDir, REMOVAL_REQUEST_FILENAME), "utf8"),
+  );
+
+  const registry = readRegistry();
+  const nonSecurity = readNonSecurityResolutions();
+  const manifest = readManifest();
+  const sync = checkSync(registry, manifest.resolutions ?? {}, nonSecurity);
+  if (!sync.pass) {
+    throw new AuditPolicyError(
+      `yarn-resolutions.json is out of sync: ${sync.problems.join("; ")}`,
+    );
+  }
+
+  const removable = authorizeRemoval(request, nonSecurity, manifest.resolutions ?? {});
+  const removed = applyRemoval(manifest, nonSecurity, request.patterns);
+
+  writeFileSync(
+    join(PROJECT_DIR, "package.json"),
+    `${JSON.stringify(removed.manifest, null, 2)}\n`,
+    "utf8",
+  );
+  writeFileSync(
+    NON_SECURITY_PATH,
+    `${JSON.stringify(removed.nonSecurity, null, 2)}\n`,
+    "utf8",
+  );
+
+  const { GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID } = process.env;
+  const runUrl =
+    GITHUB_SERVER_URL && GITHUB_REPOSITORY && GITHUB_RUN_ID
+      ? `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`
+      : null;
+  mkdirSync(prDir, { recursive: true });
+  writeFileSync(
+    join(prDir, "pull-request-body.md"),
+    renderRemovalPullRequestBody(removable, {
+      runUrl,
+      lockfileChanges: request.lockfileChanges,
+    }),
+    "utf8",
+  );
+  writeFileSync(join(prDir, "pull-request-title.txt"), `${REMOVAL_PR_TITLE}\n`, "utf8");
+
+  process.stdout.write(
+    `removing ${request.patterns.join(", ")} (lockfile changes: ${String(request.lockfileChanges)})\n`,
+  );
 }
 
 function runNonSecurityProbes(manifest, nonSecurity) {
@@ -872,8 +1033,15 @@ function runNonSecurityProbes(manifest, nonSecurity) {
     typeof outputDir === "string" &&
     outputDir !== ""
   ) {
-    writeRemoval(manifest, nonSecurity, removable, outputDir);
-    process.stdout.write(`removal files written to ${outputDir}\n`);
+    const lockfileChanges = writeRemovalRequest(
+      manifest,
+      nonSecurity,
+      removable,
+      outputDir,
+    );
+    process.stdout.write(
+      `removal request written to ${join(outputDir, REMOVAL_REQUEST_FILENAME)} (lockfile changes: ${String(lockfileChanges)})\n`,
+    );
   }
   writeGitHubOutput("removal", removable.length > 0 ? "true" : "false");
 }
@@ -905,9 +1073,11 @@ async function main() {
       runSync();
     } else if (mode === "stale") {
       runStale();
+    } else if (mode === "apply-removal") {
+      runApplyRemoval();
     } else {
       throw new AuditPolicyError(
-        `Usage: yarn-resolutions-audit.mjs <sync|stale> (got ${String(mode)})`,
+        `Usage: yarn-resolutions-audit.mjs <sync|stale|apply-removal> (got ${String(mode)})`,
       );
     }
   } catch (error) {
