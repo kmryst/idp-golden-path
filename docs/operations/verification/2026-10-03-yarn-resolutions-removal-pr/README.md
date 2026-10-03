@@ -45,7 +45,7 @@ run はすべて `Dependency Audit`（`.github/workflows/dependency-audit.yml`�
 | `Yarn Resolutions Removal PR` | success、`pull-request-operation = created` | success、`A pull request already exists`、`pull-request-operation = none` |
 | 撤去 PR | [#292](https://github.com/kmryst/idp-golden-path/pull/292)（base `291-verify-removal-pr`、author `kmryst-dependency-bot[bot]`） | #292 のまま。重複 PR なし |
 
-#292 の内容:
+PR #292 の内容:
 
 - タイトル / commit: `chore(deps): 不要になった yarn resolutions を撤去する`
 - 差分: `backstage/package.json` +1 -2（`prettier@npm:^3.9.6` の行だけ削除）、`scripts/ci/yarn-resolutions-non-security.json` +0 -10（対応エントリの削除）。`backstage/yarn.lock` は差分なし（no-op resolutions のため）
