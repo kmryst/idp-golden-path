@@ -502,6 +502,8 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           IDP_RESOLUTIONS_REMOVAL_DIR: ${{ runner.temp }}/yarn-resolutions-removal
+          # Issue #291 受け入れ条件 3 の故障注入: 到達できない registry を指定する（検証ブランチ限定）
+          YARN_NPM_REGISTRY_SERVER: https://registry.invalid
         run: node scripts/ci/yarn-resolutions-audit.mjs stale
 
       - name: Upload removal changes
