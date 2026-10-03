@@ -561,6 +561,7 @@ jobs:
         run: |
           node scripts/ci/yarn-resolutions-audit.mjs apply-removal
           echo "title=$(head -n 1 "$IDP_RESOLUTIONS_PR_DIR/pull-request-title.txt")" >> "$GITHUB_OUTPUT"
+          echo "draft=$(head -n 1 "$IDP_RESOLUTIONS_PR_DIR/pull-request-draft.txt")" >> "$GITHUB_OUTPUT"
           git --no-pager diff --stat
           # 生成した差分が想定の 2 ファイルに限られることを確認する
           changed="$(git --no-pager diff --name-only | sort | tr '\n' ' ')"
@@ -605,6 +606,12 @@ jobs:
           author: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
           title: ${{ steps.apply.outputs.title }}
           body-path: ${{ runner.temp }}/yarn-resolutions-pr/pull-request-body.md
+          # lock の更新が要る場合は Draft にする。Backstage CI は required status check ではなく
+          # lock 不一致で赤でもマージできてしまうため、GitHub の仕様でマージできない Draft を
+          # 「人の作業が要る PR」の目印兼つなぎにする（根本対策 = Backstage CI の required 化は別 Issue）。
+          # `always-true` は PR の branch が更新されたときに通常の PR を Draft に戻す。
+          # action は Draft を Ready for review に戻さないので、それは人が lock を足した後に行う
+          draft: ${{ steps.apply.outputs.draft == 'true' && 'always-true' || 'false' }}
           labels: |
             type:chore
             area:backstage

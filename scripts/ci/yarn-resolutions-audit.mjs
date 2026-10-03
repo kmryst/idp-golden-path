@@ -457,6 +457,15 @@ export function renderRemovalPullRequestBody(removable, options = {}) {
   const runUrl = options.runUrl ?? null;
   const lockfileChanges = options.lockfileChanges === true;
   const lines = [
+    // lock が変わる場合は Draft で作られる。本文の冒頭で人の作業を指示する
+    ...(lockfileChanges
+      ? [
+          "> [!IMPORTANT]",
+          "> **この PR は Draft です。`backstage/` で `yarn install` を実行して `yarn.lock` をコミットしてから Ready for review にする。**",
+          "> probe の実測で、この resolutions を外すと `backstage/yarn.lock` が変わることが分かっている。lock を足さないと Backstage CI の `yarn install --immutable` が通らない。",
+          "",
+        ]
+      : []),
     "## 目的",
     "",
     "Yarn Resolutions Inventory の probe で、次の脆弱性以外の理由の yarn resolutions が不要になったことを実測した。",
@@ -481,10 +490,7 @@ export function renderRemovalPullRequestBody(removable, options = {}) {
     "",
     ...(lockfileChanges
       ? [
-          "> [!IMPORTANT]",
-          "> probe の実測では、この resolutions を外すと `backstage/yarn.lock` が変わる。",
-          "> このままでは Backstage CI の `yarn install --immutable` が赤になるため、",
-          "> **この branch を checkout し、`backstage/` で `yarn install` を実行して lock をコミットする**必要がある。",
+          "probe の実測では、この resolutions を外すと `backstage/yarn.lock` が変わる（冒頭の手順で lock を足す）。",
           "",
         ]
       : [
@@ -1000,6 +1006,12 @@ function runApplyRemoval() {
     "utf8",
   );
   writeFileSync(join(prDir, "pull-request-title.txt"), `${REMOVAL_PR_TITLE}\n`, "utf8");
+  // lock の更新が要る PR は Draft にする（GitHub の仕様でマージできず、人の作業が要る目印になる）
+  writeFileSync(
+    join(prDir, "pull-request-draft.txt"),
+    `${String(request.lockfileChanges)}\n`,
+    "utf8",
+  );
 
   process.stdout.write(
     `removing ${request.patterns.join(", ")} (lockfile changes: ${String(request.lockfileChanges)})\n`,

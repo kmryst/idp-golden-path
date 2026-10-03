@@ -269,8 +269,11 @@ schedule を Dependabot（月曜 09:15 JST、job は 09:38 JST ごろ完了）�
 artifact に他のファイルがある、許可外の pattern、余分なフィールドは拒否して赤になる（ADR-0015 選択肢 8）。
 
 **撤去 PR に `yarn.lock` は含まれない**（probe job が作った lock を信用しないため。ADR-0015 選択肢 8 の案 A）。
-PR 本文に「この resolutions を外すと `backstage/yarn.lock` が変わる」と書かれている場合、または撤去 PR の Backstage CI が
-`yarn install --immutable` の不一致で赤になった場合は、次の手順で lock を足す。
+probe job の実測で lock が変わると分かっている場合、撤去 PR は **Draft** で作られ、本文の冒頭に
+「`backstage/` で `yarn install` を実行して `yarn.lock` をコミットしてから Ready for review にする」と書かれる。
+Draft にするのは、Backstage CI が required status check ではなく lock 不一致で赤でもマージできてしまうため
+（GitHub の仕様で Draft はマージできない。根本対策の Backstage CI の required 化は別 Issue で扱い、Draft はそれまでのつなぎ兼目印）。
+Draft の撤去 PR、または Backstage CI が `yarn install --immutable` の不一致で赤になった撤去 PR は、次の手順で lock を足す。
 
 ```bash
 git fetch origin dependency-bot/yarn-resolutions-removal
@@ -281,8 +284,9 @@ git commit -m "chore(deps): yarn resolutions 撤去に伴う lockfile を更新�
 git push
 ```
 
-lock が変わらない場合（`@yarnpkg/core/got` の現状のように、外す resolutions が依存グラフに効いていない場合）はこの手順は不要で、
-PR はそのままマージできる。
+Backstage CI が緑になったら PR を Ready for review にする（action は Draft を自動で Ready に戻さない）。
+lock が変わらない場合（`@yarnpkg/core/got` の現状のように、外す resolutions が依存グラフに効いていない場合）は
+通常の PR として作られ、この手順は不要で、そのままマージできる。
 
 **GitHub App の認証情報**: variable `DEPENDENCY_BOT_CLIENT_ID`（App の Client ID。secret ではない）と
 secret `DEPENDENCY_BOT_PRIVATE_KEY`（秘密鍵）に登録する。導入時に使った variable `DEPENDENCY_BOT_APP_ID` は使われなくなったため、

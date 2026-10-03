@@ -600,8 +600,8 @@ test("removal pull request body tells the reviewer to run yarn install when the 
     [{ entry: probedEntry(), resolution: "npm:11.8.2" }],
     { lockfileChanges: true },
   );
-  assert.match(changes, /\[!IMPORTANT\]/);
-  assert.match(changes, /`backstage\/` で `yarn install` を実行して lock をコミットする/);
+  assert.match(changes, /^> \[!IMPORTANT\]\n> \*\*この PR は Draft です。`backstage\/` で `yarn install` を実行して `yarn.lock` をコミットしてから Ready for review にする。\*\*/);
+  assert.match(changes, /\n## 目的/);
 
   const noChanges = renderRemovalPullRequestBody([
     { entry: probedEntry(), resolution: "npm:11.8.2" },

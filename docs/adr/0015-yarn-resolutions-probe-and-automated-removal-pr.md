@@ -163,6 +163,18 @@ PR 作成 job は信頼できる checkout の台帳で **probe 付きかつ `pac
 A を採る理由は、本機構の目的が「気づく」ことであり、lock の自動更新は利便性に過ぎないこと、B は分割の意味を失い、
 C は健全性を示しにくいことである。ユーザーが A を選んだ（2026-10-03）。
 
+**A の代償への手当て（Draft PR）**: Backstage CI は required status check ではないため、lock 不一致で赤のままでもマージできてしまう。
+そこで lock が変わる場合（`removal.json` の `lockfileChanges` が `true`）は撤去 PR を **Draft** で作り、本文の冒頭に
+「`backstage/` で `yarn install` を実行して `yarn.lock` をコミットしてから Ready for review にする」と書く。
+Draft は GitHub の仕様上マージできないので、人の作業が要る PR の目印兼つなぎになる。根本対策（Backstage CI を required にする）は
+別 Issue で扱う。lock が変わらない場合は通常の PR にする。
+
+`peter-evans/create-pull-request` の `draft` 入力の挙動（`src/create-pull-request.ts` で確認）: `true` は作成時のみ、
+`always-true` は作成時と「branch が更新された update」時に通常の PR を Draft へ変換する。**action は Draft を Ready for review に戻さない**
+（そのコードパスが無い）ので、lock を足した後に Ready for review にするのは人の操作である。
+`draft: ${{ lockfileChanges == 'true' && 'always-true' || 'false' }}` として、再実行で lock が変わる状態になれば Draft に戻し、
+変わらない状態になっても自動では Ready にしない（人が本文の指示を読んで判断する）。
+
 ## 採択理由
 
 - 上流の修正待ちで入れた resolutions の要否を、人の棚卸しを待たずに毎週実測できる。判定方法は実際の回避策（`@yarnpkg/core/got`）で
@@ -180,8 +192,9 @@ C は健全性を示しにくいことである。ユーザーが A を選んだ
 - 解除可能になった週は `dependency-bot/yarn-resolutions-removal` ブランチから撤去 PR（`chore(deps): 不要になった yarn resolutions を撤去する`、
   `type:chore` / `area:backstage` / `area:ci-cd` / `risk:low` / `cost:none`）が作られる。
   対応は Backstage CI の結果と `tracking` の Issue（上流の修正内容）を確認してマージすること。
-  PR 本文に「lock が変わる」と書かれている場合（または Backstage CI が `yarn install --immutable` で赤の場合）は、
-  その branch で `backstage/` の `yarn install` を実行して lock を 1 コミット足す（選択肢 8 の案 A の代償）
+  撤去 PR が Draft の場合（lock が変わる場合）は、その branch で `backstage/` の `yarn install` を実行して lock を 1 コミット足し、
+  Backstage CI が緑になったら Ready for review にする（選択肢 8 の案 A の代償）
+- 後続 Issue: Backstage CI を required status check にする（Draft はそれまでのつなぎ）。`dependency-unblock-check` を同じ自動 PR 方式に寄せる
 - 新しい非セキュリティ起因の resolutions を追加するときは、解除条件が上流のリリース待ちなら `probe` と `tracking` を書く
   （手順は security-scanning.md）
 - `actions/create-github-app-token` と `peter-evans/create-pull-request` が依存に加わる。Dependabot（github-actions）の更新対象になる
