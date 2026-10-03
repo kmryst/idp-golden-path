@@ -10,7 +10,7 @@ required status checks との関係は [branch-protection.md](./branch-protectio
 | workflow | 検出対象 | 実行タイミング | 検出時の扱い |
 | --- | --- | --- | --- |
 | [Gitleaks Secret Scan](../../.github/workflows/security-scan.yml) | git 履歴への secret / credential 混入 | PR | fail（required status check） |
-| [Dependency Audit](../../.github/workflows/dependency-audit.yml) | `backstage/`（Yarn）、ルートと skeleton（npm）、および reusable workflow 消費側の依存関係にある既知脆弱性（CVE） | PR / 週次（月曜 09:00 JST）/ 手動 | high 以上で fail、moderate 以下は警告のみ |
+| [Dependency Audit](../../.github/workflows/dependency-audit.yml) | `backstage/`（Yarn）、ルートと skeleton（npm）、および reusable workflow 消費側の依存関係にある既知脆弱性（CVE） | PR / 週次（月曜 10:30 JST。Dependabot の 09:15 JST 実行の後）/ 手動 | high 以上で fail、moderate 以下は警告のみ |
 | [CodeQL](../../.github/workflows/codeql.yml) | コード起因の脆弱性（SAST） | PR / main push / 週次（月曜 09:00 JST） | Security > Code scanning alerts に集約（CI は解析失敗時のみ fail） |
 | [Trivy Image Scan](../../.github/workflows/trivy-image.yml) | コンテナイメージの中身（ベースイメージ由来の OS パッケージ・ランタイム同梱ライブラリ）の既知脆弱性 | 消費側の caller 次第（`workflow_call` 専用） | 既定は非 blocking。Security > Code scanning alerts と Step Summary に集約 |
 | [Trivy Config Scan](../../.github/workflows/trivy-config.yml) | IaC（Terraform）と Dockerfile の設定不備（misconfiguration） | PR | 既定は非 blocking。Step Summary + artifact |
@@ -173,9 +173,11 @@ resolutions は「その行を外して依存解決し直せば、まだ必要�
 
 **非セキュリティ起因の resolutions**: バージョン統一やビルド不整合の回避で入れた resolutions は
 advisory を持たないため台帳（`yarn-resolutions.json`）には登録できない。
-代わりに `scripts/ci/yarn-resolutions-non-security.json` に `pattern` と `reason` の 2 キーで宣言する。
-こちらは棚卸し（stale）の対象外で、advisory の再出現による削除判定は行わない。
-`@types/react` / `@types/react-dom` の React 18 系への統一がこれに当たる。
+代わりに `scripts/ci/yarn-resolutions-non-security.json` に `pattern` と `reason` で宣言する。
+advisory の再出現による削除判定は行わず、代わりに任意の `probe` で「行を外しても依存解決が通るか」を実測する
+（後述の「[脆弱性以外の resolutions の probe と撤去 PR](#脆弱性以外の-resolutions-の-probe-と撤去-pr)」）。
+`@types/react` / `@types/react-dom` の React 18 系への統一（方針由来、probe なし）と、
+`@yarnpkg/core/got` の上書き（上流の修正待ち、probe あり）がこれに当たる。
 
 `backstage/package.json` の `resolutions` に書かれた行は、
 **どちらか一方のファイルに必ず宣言されていなければならない**（両方に書くのも fail）。
@@ -185,7 +187,8 @@ advisory を持たないため台帳（`yarn-resolutions.json`）には登録で
 | チェック | 実行タイミング | 実行 job | 内容 |
 | --- | --- | --- | --- |
 | sync | 毎回（PR / 週次 / 手動） | `Yarn Resolutions Registry` | 台帳と非セキュリティ宣言のスキーマ検証と、`backstage/package.json` の resolutions との**双方向**の同期（欠落・右辺不一致・未宣言の resolutions で fail） |
-| stale（棚卸し） | 週次 schedule / 手動 | `Yarn Resolutions Inventory` | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する |
+| stale（棚卸し） | 週次 schedule / 手動 | `Yarn Resolutions Inventory` | 台帳の resolutions を全部外した一時プロジェクトで lockfile を再解決（`yarn install --mode=update-lockfile`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかを実測する。あわせて非セキュリティ宣言の `probe` を実行し、解除可能なら撤去の差分を artifact に出す |
+| 撤去 PR の作成 | stale で解除可能が出たときのみ | `Yarn Resolutions Removal PR` | artifact の差分を適用し、GitHub App のトークンで撤去 PR を作る（install は実行しない） |
 
 sync / stale はどちらも `Dependency Audit` job とは別の job で実行し、`needs:` による依存も持たせません。
 同一 job の step にすると、step の `if:` に含まれる暗黙の `success()` により
@@ -207,6 +210,68 @@ warn ではなく fail とする）。検出されたら resolutions の該当�
 棚卸しを毎 PR ではなく週次にするのは、判定材料（上流のリリース）が週次でしか変わらず、
 依存グラフ全体の再解決コストを毎 PR で払う価値がないため。台帳未記載の High / Critical が
 管理対象パッケージに再出現した場合は警告に留める（実グラフの週次 audit ゲートが本監視を担う）。
+
+### 脆弱性以外の resolutions の probe と撤去 PR
+
+上流の修正待ちで入れた resolutions（例: `@yarnpkg/core/got`。berry#7281 の修正版が出れば不要になる）は、
+advisory を持たないため stale の判定が使えない。放置すると修正後も気づかれず残り続けるので、
+`scripts/ci/yarn-resolutions-non-security.json` のエントリに `probe` を宣言し、週次の `Yarn Resolutions Inventory` で実測する
+（設計判断は [ADR-0015](../adr/0015-yarn-resolutions-probe-and-automated-removal-pr.md)、導入は Issue #291）。
+
+**宣言のスキーマ**:
+
+```json
+{
+  "pattern": "@yarnpkg/core/got",
+  "reason": "…（なぜ入れたか、解除条件）",
+  "probe": { "up": ["@backstage/cli"] },
+  "tracking": "https://github.com/yarnpkg/berry/issues/7281"
+}
+```
+
+| キー | 必須 | 内容 |
+| --- | --- | --- |
+| `pattern` / `reason` | 常に | 従来どおり |
+| `probe.up` | 任意 | `yarn up -R` に渡すパッケージ名（scope 可、glob や range は不可）。その resolutions が効く依存を**引き込む親パッケージ**を書く。`backstage/yarn.lock` に npm 依存として実在しないと機構の故障として赤になる |
+| `tracking` | 任意 | 解除条件を追う Issue の `https://` URL（上流または自リポジトリ）。撤去 PR の本文に転記される |
+
+**probe の方法**（Issue #291 で実測して決めた）: 行を外した一時プロジェクトで
+`yarn up -R <probe.up> --mode=update-lockfile` を実行し、依存解決が通れば解除可能とする。
+素の `yarn install --mode=update-lockfile` では判定できない。`@yarnpkg/core/got` の場合、main の依存グラフには
+`@yarnpkg/core` 自体が入っておらず（`@backstage/cli` 0.36.6 以降で引き込まれる）、行を外しても install が 1 秒で成功して
+誤って「解除可能」になる。`yarn up -R @backstage/cli` は `@backstage/cli` の range を最新に再解決して
+`@yarnpkg/core` を引き込むため、上流が未修正なら行を外した状態で ENOENT（exit 1、3.6 秒）、
+行を残した状態で成功（exit 0、10 秒）と、効いている条件をそのまま再現できる。
+
+**結果は 3 つに分ける**。
+
+| 結果 | job の色 | 動作 |
+| --- | --- | --- |
+| 解除可能（行を外しても通った） | 緑 | 撤去の差分（`backstage/package.json`・`backstage/yarn.lock`・非セキュリティ宣言・PR 本文）を artifact に出し、`Yarn Resolutions Removal PR` job が撤去 PR を作る |
+| まだ必要（行を外すと通らない） | 緑 | 何もしない |
+| 機構の故障 | 赤 | 撤去 PR は作らない。「解除可能」と区別するため、次を故障として扱う: 行を**残した**同じ実行（対照）が通らない（通信障害・registry 障害・回避策自体の破綻）、`probe.up` が `yarn.lock` に無い（`yarn up -R` は一致なしでも exit 0 になり誤報の元）、撤去後の lockfile 再解決の失敗 |
+
+対照を先に実行し、通らなければ probe は実行しない（ADR-0013 の「機構が壊れていれば probe の結果は信用できない」と同じ）。
+
+**撤去 PR**: ブランチ名は `dependency-bot/yarn-resolutions-removal` に固定し、再実行しても PR は重複せず既存の PR が更新される。
+作成者は GitHub App `kmryst-dependency-bot`（権限は Contents / Pull requests の Read and write、インストール先は本リポジトリのみ）。
+`GITHUB_TOKEN` で作った PR では `pull_request` トリガーのワークフロー（required status checks）が起動しないため App を使う。
+PR には `type:chore` / `area:backstage` / `area:ci-cd` / `risk:low` / `cost:none` が付き、本文に `Refs #291` を含むので
+PR Policy Check を通る。マージ前に Backstage CI の結果と Tracking の Issue（上流の修正内容）を確認する。
+PR のレビューは Dependabot と同じ週 1 回の流れに乗せるため、実行頻度は週次のままにし、
+schedule を Dependabot（月曜 09:15 JST、job は 09:38 JST ごろ完了）の後の 10:30 JST に置く。
+
+**job を 2 つに分ける理由**: `Yarn Resolutions Inventory`（probe）は secret を持たず依存解決だけを行う。
+`Yarn Resolutions Removal PR` は App のトークンを持つが install は実行せず、artifact の差分を適用して commit / PR 作成だけを行う。
+依存解決は未検証の上流パッケージを引くため、書き込みトークンと同じ job に置かない。
+
+**GitHub App の秘密鍵**: variable `DEPENDENCY_BOT_APP_ID` と secret `DEPENDENCY_BOT_PRIVATE_KEY` に登録する。
+ローテーションと漏洩時の失効手順は ADR-0015 の「影響」節を正本とする。
+
+**新しい非セキュリティ起因の resolutions を追加するとき**: 解除条件が「上流のリリース待ち」なら `probe` と `tracking` を書く。
+「自リポジトリ側の方針」（`@types/react` の React 18 統一など）なら `probe` を書かない。probe しても永久に失敗して意味がないため。
+`probe.up` に書く親パッケージは、resolutions を外した状態で `yarn up -R <親> --mode=update-lockfile` が**失敗する**ことを
+追加時に一度ローカルで確かめる（失敗しないなら、その resolutions は最初から不要）。
 
 ### セキュリティ起因の npm overrides の運用
 
