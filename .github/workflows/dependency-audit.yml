@@ -20,8 +20,12 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # 毎週月曜 09:00 JST (00:00 UTC)
-    - cron: "0 0 * * 1"
+    # 毎週月曜 10:30 JST (01:30 UTC)。
+    # Dependabot の /backstage 週次実行（.github/dependabot.yml で月曜 09:15 JST、
+    # job は 09:38 JST ごろに完了。Issue #291 で実測）の後に Yarn Resolutions Inventory の
+    # probe を走らせ、撤去 PR を Dependabot と同じ週 1 回のレビューの流れに乗せるため。
+    # 旧: 09:00 JST（Dependabot より前。Issue #291 で変更）
+    - cron: "30 1 * * 1"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -448,6 +452,14 @@ jobs:
   # 同一 job に同居させると step の暗黙の success() によって
   # 「audit gate が落ちている間は棚卸しが丸ごと skip される」従属関係が生まれる（Issue #255）。
   # 同じ理由で needs: も付けない（付けると再び audit gate の失敗に引きずられる）
+  #
+  # 脆弱性以外の理由の resolutions（scripts/ci/yarn-resolutions-non-security.json）は
+  # `probe` を宣言したエントリだけを実測する（Issue #291、ADR-0015）。結果は 3 つに分かれる:
+  #   解除可能   = 緑。撤去の差分を artifact に出し、後続の yarn-resolutions-removal-pr が PR を作る
+  #   まだ必要   = 緑。何もしない
+  #   機構の故障 = 赤（対照の実行や lockfile 再解決の失敗、台帳の誤り）。PR は作らない
+  # この job は secret を持たない。yarn の依存解決は未検証の上流パッケージを引くため、
+  # 書き込みトークンと同じ job には置かない（PR 作成は次の job に分離）
   yarn-resolutions-inventory:
     name: Yarn Resolutions Inventory
     # 本リポジトリ固有のチェックであり消費側では実行しない
@@ -458,12 +470,21 @@ jobs:
         (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
       }}
     runs-on: ubuntu-latest
+    # 実測は 30 秒前後（2026-09-14 / 09-21 / 09-28 の schedule 実行）に probe 2 回と
+    # lockfile 再解決 1 回（ローカル実測で計 10〜15 秒）が加わる程度。registry 応答の
+    # 遅延を見込んでも 15 分あれば足り、既定の 360 分で hang を放置しないための上限
+    timeout-minutes: 15
+    outputs:
+      removal: ${{ steps.stale.outputs.removal }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory || 'backstage' }}
     steps:
+      # 依存解決の子プロセスに git の認証ヘッダを渡さない（この job は push しない）
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -475,9 +496,133 @@ jobs:
           corepack enable
           yarn --version
 
+      # 環境変数名は YARN_ prefix を避ける（Yarn は YARN_* を設定値として解釈する）
       - name: Check yarn resolutions inventory (stale)
+        id: stale
         working-directory: ${{ github.workspace }}
+        env:
+          IDP_RESOLUTIONS_REMOVAL_DIR: ${{ runner.temp }}/yarn-resolutions-removal
         run: node scripts/ci/yarn-resolutions-audit.mjs stale
+
+      - name: Upload removal changes
+        if: ${{ steps.stale.outputs.removal == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: yarn-resolutions-removal
+          path: ${{ runner.temp }}/yarn-resolutions-removal
+          if-no-files-found: error
+          retention-days: 7
+
+  # 解除可能と判定された resolutions の撤去 PR を作る。install は実行せず、
+  # 前の job が出した差分（artifact）をそのまま適用して commit / push / PR 作成だけを行う。
+  # トークンは GitHub App（kmryst-dependency-bot）の installation token。GITHUB_TOKEN で
+  # 作った PR では pull_request トリガーのワークフロー（required status checks）が起動しないため。
+  # App の権限は Contents / Pull requests の Read and write のみで、インストール先は本リポジトリだけ。
+  # ブランチ名は固定し、再実行しても PR が重複せず既存の PR が更新される
+  # （正本: docs/operations/security-scanning.md、設計判断: ADR-0015）
+  yarn-resolutions-removal-pr:
+    name: Yarn Resolutions Removal PR
+    needs: yarn-resolutions-inventory
+    # 本リポジトリ固有の処理であり消費側では実行しない。
+    # inventory job が失敗（機構の故障）した場合は needs の暗黙の success() で skip される
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path' &&
+        needs.yarn-resolutions-inventory.outputs.removal == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download removal changes
+        uses: actions/download-artifact@v8
+        with:
+          name: yarn-resolutions-removal
+          path: ${{ runner.temp }}/yarn-resolutions-removal
+
+      - name: Apply removal changes to the working tree
+        env:
+          REMOVAL_DIR: ${{ runner.temp }}/yarn-resolutions-removal
+        run: |
+          for file in \
+            backstage/package.json \
+            backstage/yarn.lock \
+            scripts/ci/yarn-resolutions-non-security.json; do
+            if [[ ! -f "$REMOVAL_DIR/$file" ]]; then
+              echo "::error::removal artifact is missing $file"
+              exit 1
+            fi
+            cp "$REMOVAL_DIR/$file" "$file"
+          done
+          test -s "$REMOVAL_DIR/pull-request-body.md"
+          test -s "$REMOVAL_DIR/pull-request-title.txt"
+          echo "title=$(head -n 1 "$REMOVAL_DIR/pull-request-title.txt")" >> "$GITHUB_OUTPUT"
+          git --no-pager diff --stat
+        id: apply
+
+      # actions/create-github-app-token v3 は app-id 入力を deprecated にし client-id を推奨している。
+      # 現在登録済みの variable は App ID（DEPENDENCY_BOT_APP_ID）のため app-id を使う。
+      # client-id への切り替えは variable の追加（DEPENDENCY_BOT_CLIENT_ID）とあわせて行う
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.DEPENDENCY_BOT_APP_ID }}
+          private-key: ${{ secrets.DEPENDENCY_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Resolve GitHub App bot user
+        id: bot-user
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update removal pull request
+        id: create-pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: dependency-bot/yarn-resolutions-removal
+          delete-branch: true
+          add-paths: |
+            backstage/package.json
+            backstage/yarn.lock
+            scripts/ci/yarn-resolutions-non-security.json
+          commit-message: ${{ steps.apply.outputs.title }}
+          committer: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
+          author: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
+          title: ${{ steps.apply.outputs.title }}
+          body-path: ${{ runner.temp }}/yarn-resolutions-removal/pull-request-body.md
+          labels: |
+            type:chore
+            area:backstage
+            area:ci-cd
+            risk:low
+            cost:none
+
+      - name: Record pull request
+        env:
+          OPERATION: ${{ steps.create-pr.outputs.pull-request-operation }}
+          PR_URL: ${{ steps.create-pr.outputs.pull-request-url }}
+        run: |
+          {
+            echo "## Yarn resolutions removal pull request"
+            echo ""
+            echo "- Operation: ${OPERATION:-none}"
+            echo "- Pull request: ${PR_URL:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # セキュリティ起因 npm overrides の台帳（scripts/ci/npm-overrides.json）と、
   # ルート / skeleton の package.json の overrides の同期検証。

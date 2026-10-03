@@ -33,8 +33,8 @@ name: Dependency Unblock Check
 
 on:
   schedule:
-    # 毎週月曜 10:15 JST (01:15 UTC)。Dependabot 09:15 JST /
-    # Dependency Audit 09:00・09:45 JST より後に置く
+    # 毎週月曜 10:15 JST (01:15 UTC)。Dependabot 09:15 JST より後に置く
+    # （Dependency Audit は Issue #291 で 10:30 JST に移動した。順序の依存はない）
     - cron: "15 1 * * 1"
   workflow_dispatch:
     inputs:
