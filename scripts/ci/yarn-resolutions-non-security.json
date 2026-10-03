@@ -6,5 +6,9 @@
   {
     "pattern": "@types/react-dom",
     "reason": "@types/react と同じ major に揃えるためのバージョン統一。片方だけ 19 になると JSX の型が食い違う。advisory 回避ではない"
+  },
+  {
+    "pattern": "@yarnpkg/core/got",
+    "reason": "@yarnpkg/core 4.9.2 が got の依存指定を上流リポジトリ内のパッチファイルへの相対参照（patch:got@npm%3A11.8.2#~/.yarn/patches/...）のまま公開しており、@backstage/cli 経由で引き込むと依存解決が ENOENT で失敗するため、通常の npm 版に上書きする（https://github.com/yarnpkg/berry/issues/7281 ）。advisory 回避ではない。解除条件: berry#7281 が close され、got の指定を修正した @yarnpkg/core が npm に公開されたら撤去する（Issue #284）"
   }
 ]
