@@ -10,7 +10,8 @@ name: Markdown Lint
 
 on:
   pull_request:
-    branches: [main]
+    # Issue #291 受け入れ条件 4 の検証用: 検証ブランチ向け PR でも起動させる（検証ブランチ限定の一時変更）
+    branches: [main, 291-verify-removal-pr]
   workflow_call:
     inputs:
       node-version:
