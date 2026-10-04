@@ -81,6 +81,7 @@ Destroy は誤爆防止のため確認入力（`destroy` のタイプ）を必�
 - [ADR 0012](./docs/adr/0012-split-backstage-auth-config-by-environment.md) — Backstage の auth provider 設定を環境別 config に分離する
 - [ADR 0013](./docs/adr/0013-dependency-unblock-check.md) — Dependabot ignore の解除条件を週次で実測検証し、朗報を「赤」で通知する
 - [ADR 0014](./docs/adr/0014-terraform-toolchain-version-standardization.md) — Terraform ツールチェーンのバージョンを 3 リポジトリで 1.14.8 に統一し、ローカル正本と CI pin の整合性を CI で検査する
+- [ADR 0015](./docs/adr/0015-yarn-resolutions-probe-and-automated-removal-pr.md) — 脆弱性以外の yarn resolutions を週次で probe し、解除可能になったら GitHub App で撤去 PR を自動作成する
 
 ## 開発への参加
 
