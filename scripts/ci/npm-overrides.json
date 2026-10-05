@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "pattern": "argparse",
+    "override": "2.0.1",
+    "directories": [
+      ".",
+      "backstage/templates/service-baseline/skeleton"
+    ],
+    "advisories": [
+      "GHSA-0000-0000-0000"
+    ],
+    "dependents": [
+      "js-yaml@4.3.2"
+    ],
+    "reason": "検証用ダミー（Issue #310 の実地検証。検証ブランチ専用で main にはマージしない）。存在しない GHSA を記録しているため棚卸しで必ず stale になる"
+  }
+]
