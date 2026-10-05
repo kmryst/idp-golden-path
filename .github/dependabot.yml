@@ -81,6 +81,21 @@ updates:
       # 追跡: Issue #146
       - dependency-name: "jsdom"
         update-types: ["version-update:semver-major"]
+      # typescript 7 は、本リポジトリの Yarn 4.13.0 では lockfile 更新の時点で失敗する。
+      # 組み込みパッチ compat/typescript が TS7 に無い lib/_tsc.js を探して ENOENT になる
+      # （peer 範囲違反ではない。上流修正は yarnpkg/berry#7190、Yarn 4.17.1）。
+      # Yarn を上げても、@typescript-eslint/* 8.x の peer が typescript <6.1.0 で
+      # TS7 の JS API 非公開に未対応のため lint:all が落ちる（typescript-eslint#10940）。
+      # 実測: Dependabot run 37247087537 / 37269492519 で typescript だけ skip され run が failure。
+      # 実測: Yarn 4.18.1 で TS7 を入れると tsc / test は exit 0、lint:all / build:all は exit 1。
+      # 影響: npm-dev グループの他パッケージ（PR #274）は更新されるが run が毎回赤になる。
+      # 本番影響なし: typescript は devDependency でビルド・型チェック・lint 専用。
+      # 解除条件: Yarn 4.17.1 以上、かつ @typescript-eslint/parser の peer が typescript 7 を含み、
+      #   かつ build:all が TS7 で通る（rollup-plugin-dts 6.5 以上 + @typescript/typescript6）。
+      # 見直し期限: 2026-11-02（3 リポジトリの Dependabot ignore の棚卸し時期と揃える）
+      # 追跡: Issue #305
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # backstage/templates/service-baseline/skeleton は Scaffolder の雛形で、
   # 生成先リポジトリにそのまま展開される独立した npm プロジェクト
