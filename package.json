@@ -16,7 +16,6 @@
     "markdownlint-cli2": "^0.23.3"
   },
   "overrides": {
-    "argparse": "2.0.1",
     "uc.micro": "3.0.0"
   }
 }
