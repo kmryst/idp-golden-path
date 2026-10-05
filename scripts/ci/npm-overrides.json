@@ -1,7 +1,7 @@
 [
   {
     "pattern": "argparse",
-    "override": "2.0.1",
+    "override": "2.0.0",
     "directories": [
       ".",
       "backstage/templates/service-baseline/skeleton"
