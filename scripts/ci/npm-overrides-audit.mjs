@@ -12,7 +12,18 @@
 // - stale モード（週次 / 手動）: 台帳の overrides を外した一時プロジェクトで lockfile を
 //   再解決（npm install --package-lock-only、作業ツリーは汚さない）して audit を実行し、
 //   台帳に記録された advisory が再出現するかを実測する。
-//   再出現しない overrides は不要になっているため fail し、削除を要求する
+//   判定はエントリごとに「そのエントリだけを外し、他の overrides は残した」一時プロジェクトで行う。
+//   全部を一度に外すと、override A を外したことで依存グラフから消えた依存に対する override B が
+//   「再出現しない = 不要」に見え、A を残したまま B だけ外す撤去 PR が立ってしまうため（#315 のレビュー）。
+//   全ての適用先（directories）で台帳の advisory が（severity を問わず）再出現しない overrides を
+//   「解除可能」とし、そのうち台帳順の先頭 1 件だけを removal.json に書き出す（撤去 PR はワークフロー側が
+//   作る。Issue #310、ADR-0016）。撤去 PR 1 本で外すのは、単独で検証済みの 1 件に限る。複数をまとめて
+//   外すと候補どうしの相互作用を検証し切れないため（#315 の 2 回目のレビュー）。残りは翌週以降に 1 件ずつ拾う。
+//   解除可能な override を外すと、外す前に無かった High / Critical が出る場合は機構の故障として fail し、
+//   一部のディレクトリでだけ再出現しない overrides は適用先の見直しが要るため fail する
+// - apply-removal モード（撤去 PR 作成 job）: artifact の removal.json を信頼できる checkout の
+//   台帳と package.json で許可リスト照合し、package.json の overrides と台帳を書き換え、
+//   PR のタイトル・本文・Draft の要否を書き出す。npm もネットワークも使わない
 //
 // yarn 側と違い、対象ディレクトリがルートと skeleton の 2 箇所ある。台帳は 1 ファイルにまとめ、
 // エントリ側が `directories` で適用先を宣言する。ルートと skeleton は同じ devDependencies を
@@ -26,6 +37,7 @@ import {
   appendFileSync,
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -42,6 +54,11 @@ import {
   escapeMarkdown,
   parseAuditJson,
 } from "./npm-audit-policy.mjs";
+import {
+  REMOVAL_REQUEST_FILENAME,
+  readRemovalRequestFile,
+  workflowRunUrl,
+} from "./removal-request.mjs";
 
 const GHSA_PATTERN = /^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/;
 // npm の overrides キーはパッケージ名そのもの（yarn の `pkg@npm:<range>` のような
@@ -64,6 +81,11 @@ const NON_SECURITY_PATH = join(
   "ci",
   "npm-overrides-non-security.json",
 );
+
+// 撤去 PR の本文に書く Issue 参照。PR Policy Check が `Closes/Fixes/Refs #<n>` を必須とするため、
+// 自動 PR では本機構を導入した Issue を参照する
+const REMOVAL_PR_REFS_ISSUE = 310;
+export const REMOVAL_PR_TITLE = "chore(deps): 不要になった npm overrides を撤去する";
 
 // 監査対象の npm プロジェクト。dependency-audit.yml の npm-dependency-audit job の
 // matrix と同じ集合であり、npm プロジェクトを増やすときは両方を更新する
@@ -448,11 +470,16 @@ export function evaluateStaleness(registry, advisoriesByDirectory) {
   return { pass: stale.length === 0, needed, stale, unrecorded };
 }
 
-export function renderOverridesSummary(result) {
+// removal は selectRemovable の結果。全ての stale が「全適用先で stale」なら撤去 PR を作る
+export function renderOverridesSummary(result, removal = null) {
+  let status = result.pass ? "passed" : "blocked (stale overrides found)";
+  if (!result.pass && removal !== null && removal.partial.length === 0) {
+    status = "removable: removal pull request will be created";
+  }
   const lines = [
     "## npm overrides inventory (stale check)",
     "",
-    `- Result: ${result.pass ? "passed" : "blocked (stale overrides found)"}`,
+    `- Result: ${status}`,
     "",
     "| Directory | Pattern | Override | Advisories | Status |",
     "| --- | --- | --- | --- | --- |",
@@ -471,6 +498,22 @@ export function renderOverridesSummary(result) {
         entry.override,
       )} | ${escapeMarkdown(entry.advisories.join(", "))} | stale: remove this override and its registry entry |`,
     );
+  }
+
+  if (removal !== null && removal.partial.length > 0) {
+    lines.push(
+      "",
+      "> [!CAUTION]",
+      "> Some overrides are stale in only part of their directories. Narrow `directories` (and the package.json overrides) by hand; no removal pull request is created while this persists:",
+      "",
+    );
+    for (const item of removal.partial) {
+      lines.push(
+        `- ${escapeMarkdown(item.pattern)}: stale in ${escapeMarkdown(
+          item.staleIn.join(", "),
+        )}, still needed in ${escapeMarkdown(item.neededIn.join(", "))}`,
+      );
+    }
   }
 
   if (result.unrecorded.length > 0) {
@@ -492,6 +535,185 @@ export function renderOverridesSummary(result) {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+// 全ての適用先で stale のエントリだけを撤去対象にする。ルートと skeleton に同じ overrides を
+// 入れるのが運用上の不変条件（security-scanning.md）なので、片方だけ stale のエントリは
+// 自動では外さず、人に適用先の見直しを求める（partial）
+export function selectRemovable(registry, result) {
+  const removable = [];
+  const partial = [];
+  for (const entry of registry) {
+    const staleIn = result.stale
+      .filter((item) => item.pattern === entry.pattern)
+      .map((item) => item.directory);
+    if (staleIn.length === 0) {
+      continue;
+    }
+    const neededIn = entry.directories.filter((directory) => !staleIn.includes(directory));
+    if (neededIn.length === 0) {
+      removable.push(entry);
+    } else {
+      partial.push({ pattern: entry.pattern, staleIn, neededIn });
+    }
+  }
+  return { removable, partial };
+}
+
+// ---- probe job（secret なし）と PR 作成 job（App トークンあり）の境界 ----
+//
+// ADR-0015 選択肢 8 / ADR-0016 と同じ。job 間を渡るのは artifact の removal.json 1 ファイルだけで、
+// 中身は「外す overrides の pattern 一覧」と「lockfile が変わるか」の真偽値に限る。
+// probe job は上流の最新を引いて lockfile を再解決するため、そこで作られたファイル
+// （package.json・台帳・lockfile・PR 本文）を App 名義の PR に入れない。PR 作成 job は
+// 信頼できる checkout から package.json・台帳・PR 本文を自分で生成する。lockfile は PR に含めず、
+// 変わる場合は Draft にして人が `npm install` を 1 コミット足す（ADR-0015 の案 A）
+export function parseOverridesRemovalRequest(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new AuditPolicyError(`removal request must be valid JSON: ${error.message}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new AuditPolicyError("removal request must be a JSON object");
+  }
+  const keys = Object.keys(parsed).sort();
+  if (keys.length !== 2 || keys[0] !== "lockfileChanges" || keys[1] !== "patterns") {
+    throw new AuditPolicyError(
+      "removal request must contain exactly patterns and lockfileChanges",
+    );
+  }
+  if (
+    !Array.isArray(parsed.patterns) ||
+    parsed.patterns.length === 0 ||
+    parsed.patterns.some(
+      (pattern) => typeof pattern !== "string" || !PACKAGE_NAME_PATTERN.test(pattern),
+    )
+  ) {
+    throw new AuditPolicyError(
+      "removal request patterns must be a non-empty array of npm package names",
+    );
+  }
+  if (new Set(parsed.patterns).size !== parsed.patterns.length) {
+    throw new AuditPolicyError("removal request patterns contains duplicates");
+  }
+  if (typeof parsed.lockfileChanges !== "boolean") {
+    throw new AuditPolicyError("removal request lockfileChanges must be a boolean");
+  }
+  return { patterns: [...parsed.patterns], lockfileChanges: parsed.lockfileChanges };
+}
+
+// 信頼できる checkout の台帳で pattern を許可リスト照合する。
+// 台帳（セキュリティ起因）のエントリだけを通す。非セキュリティ宣言は棚卸しの対象外なので外さない
+export function authorizeOverridesRemoval(request, registry) {
+  // 撤去 PR 1 本で外すのは、単独で検証済みの 1 件だけ（#315 の 2 回目のレビュー）
+  if (request.patterns.length !== 1) {
+    throw new AuditPolicyError(
+      `removal request must name exactly one override (got ${request.patterns.length})`,
+    );
+  }
+  return request.patterns.map((pattern) => {
+    const entry = registry.find((candidate) => candidate.pattern === pattern);
+    if (entry === undefined) {
+      throw new AuditPolicyError(
+        `removal request names ${pattern}, which is not registered in npm-overrides.json`,
+      );
+    }
+    return entry;
+  });
+}
+
+// package.json（ディレクトリごと）と台帳から、撤去対象の overrides を取り除く。
+// overrides が空になったらキーごと削除する（npm の既定の package.json に戻す）
+export function applyOverridesRemoval(manifestsByDirectory, registry, entries) {
+  const patterns = new Set(entries.map((entry) => entry.pattern));
+  const manifests = {};
+  for (const entry of entries) {
+    for (const directory of entry.directories) {
+      const manifest = manifests[directory] ?? structuredClone(manifestsByDirectory[directory]);
+      if (!isRecord(manifest) || !isRecord(manifest.overrides)) {
+        throw new AuditPolicyError(`${directory}/package.json has no overrides to remove`);
+      }
+      if (manifest.overrides[entry.pattern] === undefined) {
+        throw new AuditPolicyError(
+          `${directory}/package.json overrides has no ${entry.pattern}`,
+        );
+      }
+      delete manifest.overrides[entry.pattern];
+      if (Object.keys(manifest.overrides).length === 0) {
+        delete manifest.overrides;
+      }
+      manifests[directory] = manifest;
+    }
+  }
+  return {
+    manifests,
+    registry: registry.filter((entry) => !patterns.has(entry.pattern)),
+  };
+}
+
+// 撤去 PR の本文。PR テンプレート（.github/pull_request_template.md）の見出しに揃える
+export function renderOverridesRemovalPullRequestBody(entries, options = {}) {
+  const runUrl = options.runUrl ?? null;
+  const lockfileChanges = options.lockfileChanges === true;
+  const directories = [...new Set(entries.flatMap((entry) => entry.directories))];
+  const lines = [
+    ...(lockfileChanges
+      ? [
+          "> [!IMPORTANT]",
+          `> **この PR は Draft です。${directories
+            .map((directory) => `\`${directory}\``)
+            .join(" と ")} で \`npm install --package-lock-only --ignore-scripts\` を実行して \`package-lock.json\` をコミットしてから Ready for review にする。**`,
+          "> probe の実測で、この overrides を外すと `package-lock.json` が変わることが分かっている。lock を足さないと `npm ci` が通らない。",
+          "",
+        ]
+      : []),
+    "## 目的",
+    "",
+    "npm Overrides Inventory の棚卸しで、次のセキュリティ起因の npm overrides が全ての適用先で不要になったことを実測した（外して lockfile を再解決しても、台帳記載の advisory が再出現しない）。",
+    runUrl === null ? null : `棚卸しを実行した run: ${runUrl}`,
+    "",
+    "| Pattern | Override | Directories | Advisories |",
+    "| --- | --- | --- | --- |",
+    ...entries.map(
+      (entry) =>
+        `| \`${escapeMarkdown(entry.pattern)}\` | \`${escapeMarkdown(
+          entry.override,
+        )}\` | ${entry.directories
+          .map((directory) => `\`${escapeMarkdown(directory)}\``)
+          .join(", ")} | ${entry.advisories.map(escapeMarkdown).join(", ")} |`,
+    ),
+    "",
+    "## 変更内容",
+    "",
+    "- 上記ディレクトリの `package.json` の `overrides` から上記の行を削除（空になればキーごと削除）",
+    "- `scripts/ci/npm-overrides.json` から上記のエントリを削除",
+    "- `package-lock.json` は変更しない（probe job の成果物を信用しないため。ADR-0015 / ADR-0016）",
+    "",
+    lockfileChanges
+      ? "probe の実測では、この overrides を外すと `package-lock.json` が変わる（冒頭の手順で lock を足す）。"
+      : "probe の実測では、この overrides を外しても `package-lock.json` は変わらない。",
+    "",
+    "## 影響範囲",
+    "",
+    "- **対象**: ルート / skeleton の npm 依存解決（上記 overrides が効いていた依存のみ）",
+    "- **非対象**: yarn の resolutions（`backstage/`）、非セキュリティ起因の overrides、Dependabot の更新 PR",
+    "",
+    "## 可観測性/検証",
+    "",
+    "- 棚卸し: overrides を外した一時プロジェクトで `npm install --package-lock-only --ignore-scripts` → `npm audit` を実行し、台帳記載の advisory が全ての適用先で再出現しない",
+    "- 撤去対象だけを外した一時プロジェクトでも、外す前に無かった High / Critical が新たに出ないことを確認済み",
+    "- マージ前に `npm Dependency Audit (root / skeleton)` と `npm Overrides Registry` が通ることを確認する",
+    "",
+    "## メモ（レビューポイント）",
+    "",
+    "- この PR は Dependency Audit ワークフローの npm Overrides Inventory が自動作成した（正本: `docs/operations/security-scanning.md`、設計判断: ADR-0016）。差分は PR 作成 job が信頼できる checkout から生成しており、probe job からは外す pattern の一覧だけを受け取っている",
+    "- 再実行しても同じブランチが更新され、PR は重複しない",
+    "",
+    `Refs #${REMOVAL_PR_REFS_ISSUE}`,
+  ];
+  return `${lines.filter((line) => line !== null).join("\n")}\n`;
 }
 
 function readRegistry() {
@@ -564,6 +786,7 @@ function runNpm(args, cwd) {
   return result;
 }
 
+// registryForDirectory の overrides を外した一時プロジェクトを作る（空配列なら現状のまま複製）
 function buildUnpinnedProject(directory, registryForDirectory) {
   const manifest = readManifest(directory);
   const overrides = { ...(manifest.overrides ?? {}) };
@@ -591,39 +814,177 @@ function buildUnpinnedProject(directory, registryForDirectory) {
   return tempDir;
 }
 
-function measureUnpinnedAdvisories(directory, registryForDirectory) {
-  const tempDir = buildUnpinnedProject(directory, registryForDirectory);
-  try {
-    // --ignore-scripts: 一時プロジェクトで依存の lifecycle script を走らせない
-    // （lockfile の再解決だけが目的で、node_modules も作らない）
-    const install = runNpm(
-      ["install", "--package-lock-only", "--ignore-scripts"],
-      tempDir,
+// --ignore-scripts: 一時プロジェクトで依存の lifecycle script を走らせない
+// （lockfile の再解決だけが目的で、node_modules も作らない）
+function resolveLockfile(tempDir, directory) {
+  const install = runNpm(
+    ["install", "--package-lock-only", "--ignore-scripts"],
+    tempDir,
+  );
+  if (install.status !== 0) {
+    throw new AuditPolicyError(
+      `npm install --package-lock-only failed for ${directory} with status ${String(install.status)}: ${install.stderr.slice(0, 2000)}`,
     );
-    if (install.status !== 0) {
-      throw new AuditPolicyError(
-        `npm install --package-lock-only failed for ${directory} with status ${String(install.status)}: ${install.stderr.slice(0, 2000)}`,
-      );
+  }
+}
+
+function auditProject(tempDir, directory) {
+  const audit = runNpm([...NPM_FULL_AUDIT_ARGS], tempDir);
+  if (audit.status !== 0 && audit.status !== 1) {
+    throw new AuditPolicyError(
+      `npm audit exited with unexpected status ${String(audit.status)} for ${directory}`,
+    );
+  }
+
+  const report = parseAuditJson(audit.stdout);
+  const advisories = extractAdvisories(report);
+  if (audit.status === 1 && advisories.length === 0) {
+    throw new AuditPolicyError(
+      `npm audit exited with status 1 without reporting advisories for ${directory}`,
+    );
+  }
+  return advisories;
+}
+
+function highOrCriticalKeys(advisories) {
+  return new Set(
+    advisories
+      .filter((advisory) => advisory.severity === "high" || advisory.severity === "critical")
+      .map((advisory) => `${advisory.package} ${advisory.ghsa ?? advisory.title}`),
+  );
+}
+
+// 撤去後の状態で High / Critical が増えないこと（台帳未記載の advisory の見落とし対策）を確かめる
+export function findIntroducedAdvisories(baseline, after) {
+  const before = highOrCriticalKeys(baseline);
+  return [...highOrCriticalKeys(after)].filter((key) => !before.has(key));
+}
+
+// 各エントリを、そのエントリだけを外し他の overrides を残した状態で、適用先ごとに測る。
+// measureRemovalState(directory, [entry]) は { baseline, advisories, lockfileChanged } を返す
+// （baseline は撤去前の audit 結果、advisories は外して lockfile を再解決した後の audit 結果）。
+// この状態は撤去 PR をマージした後の状態そのものなので、stale 判定と撤去前の検証を同じ計測で兼ねる
+export function evaluateOverrides(registry, measureRemovalState) {
+  const needed = [];
+  const stale = [];
+  const unrecorded = [];
+  const states = new Map();
+  for (const entry of registry) {
+    const byDirectory = {};
+    for (const directory of entry.directories) {
+      const state = measureRemovalState(directory, [entry]);
+      byDirectory[directory] = state;
+      const result = evaluateStaleness([entry], { [directory]: state.advisories });
+      needed.push(...result.needed);
+      stale.push(...result.stale);
+      unrecorded.push(...result.unrecorded);
+    }
+    states.set(entry.pattern, byDirectory);
+  }
+  return { result: { pass: stale.length === 0, needed, stale, unrecorded }, states };
+}
+
+// 撤去 PR 1 本で外すのは 1 件だけ。全ての適用先で解除可能なエントリのうち、台帳順の先頭を選ぶ。
+// 解除可能なエントリはすべて、外したときに新たな High / Critical が出ないことを確かめる
+// （先頭以外も確かめるのは、故障を「翌週に先頭になるまで」隠さないため）
+export function selectSingleRemoval(registry, evaluation) {
+  const { removable, partial } = selectRemovable(registry, evaluation.result);
+  if (partial.length > 0) {
+    return { candidate: null, waiting: [], lockfileChanges: false, partial };
+  }
+
+  const problems = [];
+  for (const entry of removable) {
+    for (const [directory, state] of Object.entries(evaluation.states.get(entry.pattern))) {
+      const introduced = findIntroducedAdvisories(state.baseline, state.advisories);
+      if (introduced.length > 0) {
+        problems.push(
+          `removing ${entry.pattern} in ${directory} introduces High / Critical advisories: ${introduced.join("; ")}`,
+        );
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new AuditPolicyError(problems.join(" / "));
+  }
+
+  if (removable.length === 0) {
+    return { candidate: null, waiting: [], lockfileChanges: false, partial: [] };
+  }
+  const [candidate, ...waiting] = removable;
+  return {
+    candidate,
+    waiting,
+    lockfileChanges: Object.values(evaluation.states.get(candidate.pattern)).some(
+      (state) => state.lockfileChanged,
+    ),
+    partial: [],
+  };
+}
+
+export function renderRemovalSelectionSummary(selection) {
+  const lines = [
+    "### Removal selection",
+    "",
+    `- Removed in this run: ${
+      selection.candidate === null ? "none" : escapeMarkdown(selection.candidate.pattern)
+    }`,
+  ];
+  if (selection.waiting.length > 0) {
+    lines.push(
+      `- Waiting (one override per removal pull request): ${selection.waiting
+        .map((entry) => escapeMarkdown(entry.pattern))
+        .join(", ")}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function createRemovalStateMeasurer() {
+  const baselines = new Map();
+  return function measureRemovalState(directory, entriesForDirectory) {
+    if (!baselines.has(directory)) {
+      const baselineDir = buildUnpinnedProject(directory, []);
+      try {
+        baselines.set(directory, auditProject(baselineDir, directory));
+      } finally {
+        rmSync(baselineDir, { recursive: true, force: true });
+      }
     }
 
-    const audit = runNpm([...NPM_FULL_AUDIT_ARGS], tempDir);
-    if (audit.status !== 0 && audit.status !== 1) {
-      throw new AuditPolicyError(
-        `npm audit exited with unexpected status ${String(audit.status)} for ${directory}`,
-      );
+    const removedDir = buildUnpinnedProject(directory, entriesForDirectory);
+    try {
+      resolveLockfile(removedDir, directory);
+      return {
+        baseline: baselines.get(directory),
+        advisories: auditProject(removedDir, directory),
+        lockfileChanged:
+          readFileSync(join(removedDir, "package-lock.json"), "utf8") !==
+          readFileSync(join(REPO_ROOT, directory, "package-lock.json"), "utf8"),
+      };
+    } finally {
+      rmSync(removedDir, { recursive: true, force: true });
     }
+  };
+}
 
-    const report = parseAuditJson(audit.stdout);
-    const advisories = extractAdvisories(report);
-    if (audit.status === 1 && advisories.length === 0) {
-      throw new AuditPolicyError(
-        `npm audit exited with status 1 without reporting advisories for ${directory}`,
-      );
-    }
+function writeRemovalRequest(candidate, lockfileChanges, outputDir) {
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(
+    join(outputDir, REMOVAL_REQUEST_FILENAME),
+    `${JSON.stringify(
+      { patterns: [candidate.pattern], lockfileChanges },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
 
-    return advisories;
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+function writeGitHubOutput(name, value) {
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (typeof outputPath === "string" && outputPath !== "") {
+    appendFileSync(outputPath, `${name}=${value}\n`, "utf8");
   }
 }
 
@@ -646,31 +1007,128 @@ function runStale() {
 
   if (registry.length === 0) {
     process.stdout.write("No managed npm overrides to check\n");
+    writeGitHubOutput("removal", "false");
     return;
   }
 
-  const advisoriesByDirectory = {};
-  for (const directory of NPM_PROJECT_DIRECTORIES) {
-    const registryForDirectory = registry.filter((entry) =>
-      entry.directories.includes(directory),
-    );
-    if (registryForDirectory.length === 0) {
-      continue;
-    }
-    advisoriesByDirectory[directory] = measureUnpinnedAdvisories(
-      directory,
-      registryForDirectory,
-    );
-  }
-
-  const result = evaluateStaleness(registry, advisoriesByDirectory);
-  const summary = renderOverridesSummary(result);
+  const evaluation = evaluateOverrides(registry, createRemovalStateMeasurer());
+  const summary = renderOverridesSummary(
+    evaluation.result,
+    selectRemovable(registry, evaluation.result),
+  );
   appendSummary(summary);
   process.stdout.write(summary);
 
-  if (!result.pass) {
+  // 一部の適用先でだけ stale なエントリがある間は、人の判断が要るので赤にし、撤去 PR は作らない。
+  // 解除可能なエントリを外すと新たな High / Critical が出る場合は、ここで throw して赤になる
+  const selection = selectSingleRemoval(registry, evaluation);
+  if (selection.partial.length > 0) {
+    writeGitHubOutput("removal", "false");
     process.exitCode = 1;
+    return;
   }
+  if (selection.candidate === null) {
+    writeGitHubOutput("removal", "false");
+    return;
+  }
+
+  const selectionSummary = renderRemovalSelectionSummary(selection);
+  appendSummary(selectionSummary);
+  process.stdout.write(selectionSummary);
+
+  // 撤去 PR を作る経路（本リポジトリの schedule / workflow_dispatch）が無いローカル実行では、
+  // 従来どおり stale を fail で知らせる
+  const outputDir = process.env.IDP_OVERRIDES_REMOVAL_DIR;
+  if (typeof outputDir !== "string" || outputDir === "") {
+    writeGitHubOutput("removal", "false");
+    process.exitCode = 1;
+    return;
+  }
+  writeRemovalRequest(selection.candidate, selection.lockfileChanges, outputDir);
+  process.stdout.write(
+    `removal request written to ${join(outputDir, REMOVAL_REQUEST_FILENAME)} (lockfile changes: ${String(selection.lockfileChanges)})\n`,
+  );
+  writeGitHubOutput("removal", "true");
+}
+
+// PR 作成 job 側。artifact（IDP_OVERRIDES_REMOVAL_DIR）の removal.json を検証し、
+// 信頼できる checkout の台帳・package.json と照合した上で、作業ツリーの package.json と台帳を
+// 書き換え、PR 本文・タイトル・Draft の要否を IDP_OVERRIDES_PR_DIR に書く
+export function runApplyRemoval(options) {
+  const { requestDir, prDir, rootDir = REPO_ROOT, runUrl = null } = options;
+  if (typeof requestDir !== "string" || requestDir === "" || typeof prDir !== "string" || prDir === "") {
+    throw new AuditPolicyError(
+      "apply-removal requires IDP_OVERRIDES_REMOVAL_DIR and IDP_OVERRIDES_PR_DIR",
+    );
+  }
+
+  const request = parseOverridesRemovalRequest(
+    readRemovalRequestFile(requestDir, AuditPolicyError),
+  );
+
+  const registryPath = join(rootDir, "scripts", "ci", "npm-overrides.json");
+  const nonSecurityPath = join(rootDir, "scripts", "ci", "npm-overrides-non-security.json");
+  const registry = parseOverridesRegistry(readFileSync(registryPath, "utf8"));
+  const nonSecurity = existsSync(nonSecurityPath)
+    ? parseNonSecurityOverrides(readFileSync(nonSecurityPath, "utf8"))
+    : [];
+  const manifestsByDirectory = {};
+  const overridesByDirectory = {};
+  for (const directory of NPM_PROJECT_DIRECTORIES) {
+    const manifest = JSON.parse(
+      readFileSync(join(rootDir, directory, "package.json"), "utf8"),
+    );
+    manifestsByDirectory[directory] = manifest;
+    overridesByDirectory[directory] = manifest.overrides ?? {};
+  }
+  const before = checkSync(registry, overridesByDirectory, nonSecurity);
+  if (!before.pass) {
+    throw new AuditPolicyError(
+      `npm-overrides.json is out of sync: ${before.problems.join("; ")}`,
+    );
+  }
+
+  const entries = authorizeOverridesRemoval(request, registry);
+  const removed = applyOverridesRemoval(manifestsByDirectory, registry, entries);
+
+  // 撤去後も台帳と package.json が同期していることを確かめてから書き込む
+  const nextOverrides = { ...overridesByDirectory };
+  for (const [directory, manifest] of Object.entries(removed.manifests)) {
+    nextOverrides[directory] = manifest.overrides ?? {};
+  }
+  const after = checkSync(removed.registry, nextOverrides, nonSecurity);
+  if (!after.pass) {
+    throw new AuditPolicyError(
+      `npm-overrides.json would be out of sync after the removal: ${after.problems.join("; ")}`,
+    );
+  }
+
+  for (const [directory, manifest] of Object.entries(removed.manifests)) {
+    writeFileSync(
+      join(rootDir, directory, "package.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      "utf8",
+    );
+  }
+  writeFileSync(registryPath, `${JSON.stringify(removed.registry, null, 2)}\n`, "utf8");
+
+  mkdirSync(prDir, { recursive: true });
+  writeFileSync(
+    join(prDir, "pull-request-body.md"),
+    renderOverridesRemovalPullRequestBody(entries, {
+      runUrl,
+      lockfileChanges: request.lockfileChanges,
+    }),
+    "utf8",
+  );
+  writeFileSync(join(prDir, "pull-request-title.txt"), `${REMOVAL_PR_TITLE}\n`, "utf8");
+  // lock の更新が要る PR は Draft にする（GitHub の仕様でマージできず、人の作業が要る目印になる）
+  writeFileSync(
+    join(prDir, "pull-request-draft.txt"),
+    `${String(request.lockfileChanges)}\n`,
+    "utf8",
+  );
+  return entries;
 }
 
 async function main() {
@@ -681,9 +1139,18 @@ async function main() {
       runSync();
     } else if (mode === "stale") {
       runStale();
+    } else if (mode === "apply-removal") {
+      const entries = runApplyRemoval({
+        requestDir: process.env.IDP_OVERRIDES_REMOVAL_DIR,
+        prDir: process.env.IDP_OVERRIDES_PR_DIR,
+        runUrl: workflowRunUrl(),
+      });
+      process.stdout.write(
+        `removing npm overrides: ${entries.map((entry) => entry.pattern).join(", ")}\n`,
+      );
     } else {
       throw new AuditPolicyError(
-        `Usage: npm-overrides-audit.mjs <sync|stale> (got ${String(mode)})`,
+        `Usage: npm-overrides-audit.mjs <sync|stale|apply-removal> (got ${String(mode)})`,
       );
     }
   } catch (error) {

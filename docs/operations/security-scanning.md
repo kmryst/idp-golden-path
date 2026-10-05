@@ -366,14 +366,46 @@ sync が防ごうとしている乖離を台帳自身が抱え込むためです
 | チェック | 実行タイミング | 実行 job | 内容 |
 | --- | --- | --- | --- |
 | sync | 毎回（PR / 週次 / 手動） | `npm Overrides Registry` | 台帳と非セキュリティ宣言のスキーマ検証と、ルート / skeleton の `package.json` の overrides との**双方向**の同期（欠落・右辺不一致・未宣言の overrides・ネストした overrides で fail） |
-| stale（棚卸し） | 週次 schedule / 手動 | `npm Overrides Inventory` | 台帳の overrides を外した一時プロジェクトで lockfile を再解決（`npm install --package-lock-only --ignore-scripts`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかをディレクトリごとに実測する |
+| stale（棚卸し） | 週次 schedule / 手動 | `npm Overrides Inventory` | 台帳の overrides を**1 件ずつ**外した（他の overrides は残した）一時プロジェクトで lockfile を再解決（`npm install --package-lock-only --ignore-scripts`、作業ツリーは汚さない）して audit を実行し、台帳記載の advisory が再出現するかをディレクトリごとに実測する。全ての適用先で再出現しない overrides のうち、台帳順の先頭 1 件を artifact（`removal.json`）に出す |
+| 撤去 PR の作成 | stale で解除可能が出たときのみ | `npm Overrides Removal PR` | pattern を台帳と照合し、信頼できる checkout から差分と本文を生成して GitHub App のトークンで撤去 PR を作る（npm は実行しない） |
 
 yarn 側と同じく、sync / stale はどちらも audit ゲート（`Dependency Audit` / `npm Dependency Audit`）とは
 別の job で実行し、`needs:` による依存も持たせません。同一 job の step にすると、step の `if:` に含まれる
 暗黙の `success()` により**ゲートが fail している間はこれらの検査が丸ごと skip**されるためです（Issue #255 / #257）。
 
-**削除条件**: stale チェックで advisory が再出現しなかった override は不要になっているため **fail** します。
-検出されたら `overrides` の該当行・lockfile の変更・台帳エントリを削除する PR を作ります。
+**削除条件と撤去 PR**: stale チェックで advisory が再出現しなかった override は不要になっています。
+撤去は GitHub App `kmryst-dependency-bot` が自動で PR にします（Issue #310、
+設計判断は [ADR-0016](../adr/0016-automated-removal-pr-for-dependency-workarounds.md)。方式と信頼境界は yarn 側の
+「[脆弱性以外の resolutions の probe と撤去 PR](#脆弱性以外の-resolutions-の-probe-と撤去-pr)」と同じ）。
+
+| 結果 | `npm Overrides Inventory` | 対応 |
+| --- | --- | --- |
+| まだ必要（advisory が再出現した） | 緑 | なし |
+| 解除可能（全ての適用先で再出現しない） | 緑 | 台帳順の先頭 1 件の pattern と「lockfile が変わるか」を artifact（`removal.json`）に出し、`npm Overrides Removal PR` job が撤去 PR を作る。2 件目以降は Job Summary の `Waiting` に出て、翌週以降に 1 件ずつ撤去 PR になる |
+| 一部の適用先でだけ再出現しない | 赤 | 撤去 PR は作らない。ルートと skeleton に同じ overrides を入れる不変条件（上記）から外れるため、`directories` と `package.json` の overrides を人が見直す |
+| 機構の故障 | 赤 | 撤去 PR は作らない。lockfile の再解決や audit の失敗、台帳と `package.json` の不一致に加え、撤去対象だけを外した一時プロジェクトで、外す前に無かった High / Critical が新たに出る場合（他の overrides との相互作用や未記録 advisory の見落とし）を故障として扱う |
+
+**判定を 1 件ずつ行い、撤去 PR 1 本で外すのも 1 件に限る理由**: 全部を一度に外して判定すると、override A を外したことで
+依存グラフから消えた依存に対する override B が「advisory が再出現しない = 不要」に見え、A を残したまま B だけを外す
+撤去 PR が立つ（#315 のレビューで指摘）。そこで各 override を、**それだけを外し他は残した**状態で判定する。
+この状態は撤去 PR をマージした後の状態そのものなので、台帳記載の advisory が **severity を問わず**再出現しないこと、
+外す前に無かった High / Critical が出ないことを、同じ計測で確かめられる。複数をまとめて外すと候補どうしの相互作用を
+検証し切れない（#315 の 2 回目のレビューで、まとめて外して競合したら測り直す方式の穴を 3 件指摘された）ため、
+撤去 PR 1 本で外すのは単独で検証済みの 1 件だけにする。台帳はほぼ空で件数が少なく、1 週に 1 件ずつでも実害はない。
+
+撤去 PR のブランチは固定なので、未マージの撤去 PR がある間も毎週の実行で同じブランチが作り直される。
+台帳順の先頭が同じなら PR は変わらず（再実行しても重複しない）、先頭が外せなくなって別の override が先頭になった場合は、
+その時点で検証済みの 1 件を外す内容に PR が更新される。外せる override が無くなった場合は PR に触れない
+（yarn 側の撤去 PR と同じ。開いたままの PR は人が close する）。
+
+**撤去 PR**: ブランチ名は `dependency-bot/npm-overrides-removal` に固定し、再実行しても PR は重複せず既存の PR が更新される。
+タイトルは `chore(deps): 不要になった npm overrides を撤去する`、ラベルは `type:chore` / `area:ci-cd` / `area:golden-path` / `risk:low` / `cost:none`。
+差分は台帳エントリと、ルート / skeleton の `package.json` の `overrides` の該当行（空になれば `overrides` キーごと）の削除だけで、
+`package-lock.json` は含まない（probe job が作った lock を信用しないため）。lock が変わると分かっている場合は **Draft** で作られ、
+本文の冒頭に手順が出る。その branch で該当ディレクトリの `npm install --package-lock-only --ignore-scripts` を実行して
+`package-lock.json` を 1 コミット足し、`npm Dependency Audit (root / skeleton)` が緑になったら Ready for review にする。
+実地検証の記録: [verification/2026-10-05-npm-overrides-removal-pr](./verification/2026-10-05-npm-overrides-removal-pr/README.md)
+
 台帳未記載の High / Critical が管理対象パッケージに再出現した場合は警告に留めます
 （実グラフの `npm Dependency Audit` が本監視を担うため）。
 

@@ -695,9 +695,17 @@ jobs:
         run: node scripts/ci/npm-overrides-audit.mjs sync
 
   # npm overrides の棚卸し: 台帳の overrides を外した一時プロジェクトで lockfile を再解決し、
-  # advisory が再出現しない overrides（= 不要になったもの）を fail で検出する。
+  # advisory が再出現しない overrides（= 不要になったもの）を検出する。
   # yarn 側の Yarn Resolutions Inventory と同じく、判定材料（上流のリリース）は週次でしか
-  # 変わらず、再解決コストを毎 PR で払う価値がないため schedule / 手動実行に限定する
+  # 変わらず、再解決コストを毎 PR で払う価値がないため schedule / 手動実行に限定する。
+  # 結果は 3 つに分かれる（Issue #310、ADR-0016）:
+  #   解除可能   = 緑。全ての適用先（directories）で stale な pattern の一覧（removal.json）を artifact に出し、
+  #                後続の npm-overrides-removal-pr が PR を作る
+  #   まだ必要   = 緑。何もしない
+  #   要対応     = 赤。一部の適用先でだけ stale（適用先の見直しが要る）、または機構の故障
+  #                （lockfile 再解決や audit の失敗、撤去後に High / Critical が新たに出る、台帳の誤り）。PR は作らない
+  # この job は secret を持たない。lockfile の再解決は未検証の上流を引くため、
+  # 書き込みトークンと同じ job には置かない（PR 作成は次の job に分離）
   npm-overrides-inventory:
     name: npm Overrides Inventory
     if: >-
@@ -707,9 +715,17 @@ jobs:
         (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
       }}
     runs-on: ubuntu-latest
+    # 台帳が空の間は数秒で終わる。1 件につき npm install --package-lock-only と npm audit を
+    # 適用先ごとに最大 3 回ずつ実行する程度で、registry の遅延を見込んでも 15 分あれば足りる
+    timeout-minutes: 15
+    outputs:
+      removal: ${{ steps.stale.outputs.removal }}
     steps:
+      # 依存解決の子プロセスに git の認証ヘッダを渡さない（この job は push しない）
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -717,4 +733,147 @@ jobs:
           node-version: "24"
 
       - name: Check npm overrides inventory (stale)
+        id: stale
+        env:
+          IDP_OVERRIDES_REMOVAL_DIR: ${{ runner.temp }}/npm-overrides-removal
         run: node scripts/ci/npm-overrides-audit.mjs stale
+
+      - name: Upload removal request
+        if: ${{ steps.stale.outputs.removal == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-overrides-removal
+          path: ${{ runner.temp }}/npm-overrides-removal
+          if-no-files-found: error
+          retention-days: 7
+
+  # 解除可能と判定された npm overrides の撤去 PR を作る（Issue #310、ADR-0016）。
+  # yarn-resolutions-removal-pr と同じ構成: npm を一切実行せず、前の job が出した撤去する pattern の
+  # 一覧（artifact の removal.json）を信頼できる checkout の台帳と照合し、package.json・台帳・PR 本文を
+  # この job が生成して commit / push / PR 作成だけを行う。package-lock.json は PR に含めない。
+  # トークンは GitHub App（kmryst-dependency-bot）の installation token（Contents / Pull requests のみ）
+  npm-overrides-removal-pr:
+    name: npm Overrides Removal PR
+    needs: npm-overrides-inventory
+    # 本リポジトリ固有の処理であり消費側では実行しない。
+    # inventory job が失敗（要対応・機構の故障）した場合は needs の暗黙の success() で skip される
+    if: >-
+      ${{
+        (inputs.package-manager || 'yarn') == 'yarn' &&
+        github.repository == 'kmryst/idp-golden-path' &&
+        needs.npm-overrides-inventory.outputs.removal == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Download removal request
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-overrides-removal
+          path: ${{ runner.temp }}/npm-overrides-removal
+
+      # 信頼境界: artifact から受け取るのは removal.json（外す pattern の一覧と lockfile が変わるか）だけ。
+      # removal.json 以外のファイル、台帳に無い pattern、余分なフィールドは拒否して赤にする
+      - name: Apply authorized removal to the working tree
+        id: apply
+        env:
+          IDP_OVERRIDES_REMOVAL_DIR: ${{ runner.temp }}/npm-overrides-removal
+          IDP_OVERRIDES_PR_DIR: ${{ runner.temp }}/npm-overrides-pr
+        run: |
+          node scripts/ci/npm-overrides-audit.mjs apply-removal
+          echo "title=$(head -n 1 "$IDP_OVERRIDES_PR_DIR/pull-request-title.txt")" >> "$GITHUB_OUTPUT"
+          echo "draft=$(head -n 1 "$IDP_OVERRIDES_PR_DIR/pull-request-draft.txt")" >> "$GITHUB_OUTPUT"
+          git --no-pager diff --stat
+          # 生成した差分が想定のファイル（台帳と、ルート / skeleton の package.json）に限られることを確認する
+          allowed=" package.json backstage/templates/service-baseline/skeleton/package.json scripts/ci/npm-overrides.json "
+          changed="$(git --no-pager diff --name-only)"
+          if [[ "$changed" != *"scripts/ci/npm-overrides.json"* ]]; then
+            echo "::error::apply-removal did not change scripts/ci/npm-overrides.json"
+            exit 1
+          fi
+          while IFS= read -r file; do
+            if [[ "$allowed" != *" $file "* ]]; then
+              echo "::error::unexpected file changed by apply-removal: $file"
+              exit 1
+            fi
+          done <<< "$changed"
+          if git status --porcelain --untracked-files=all | grep -qv '^ M '; then
+            echo "::error::apply-removal created or deleted files"
+            exit 1
+          fi
+
+      # 撤去後の作業ツリーで台帳と package.json が同期していることを、毎回の検査と同じ sync で確かめる
+      - name: Check npm overrides registry after the removal
+        run: node scripts/ci/npm-overrides-audit.mjs sync
+
+      # actions/create-github-app-token v3 は app-id 入力を deprecated にしており、
+      # 推奨の client-id（App の Client ID。secret ではない）を variable から渡す
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEPENDENCY_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDENCY_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Resolve GitHub App bot user
+        id: bot-user
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update removal pull request
+        id: create-pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: dependency-bot/npm-overrides-removal
+          delete-branch: true
+          add-paths: |
+            package.json
+            backstage/templates/service-baseline/skeleton/package.json
+            scripts/ci/npm-overrides.json
+          commit-message: ${{ steps.apply.outputs.title }}
+          committer: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
+          author: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
+          title: ${{ steps.apply.outputs.title }}
+          body-path: ${{ runner.temp }}/npm-overrides-pr/pull-request-body.md
+          # lock の更新が要る場合は Draft にする（yarn-resolutions-removal-pr と同じ。ADR-0015 選択肢 8）。
+          # `always-true` は PR の branch が更新されたときに通常の PR を Draft に戻す。
+          # action は Draft を Ready for review に戻さないので、それは人が lock を足した後に行う
+          draft: ${{ steps.apply.outputs.draft == 'true' && 'always-true' || 'false' }}
+          labels: |
+            type:chore
+            area:ci-cd
+            area:golden-path
+            risk:low
+            cost:none
+
+      - name: Record pull request
+        env:
+          OPERATION: ${{ steps.create-pr.outputs.pull-request-operation }}
+          PR_URL: ${{ steps.create-pr.outputs.pull-request-url }}
+        run: |
+          {
+            echo "## npm overrides removal pull request"
+            echo ""
+            echo "- Operation: ${OPERATION:-none}"
+            echo "- Pull request: ${PR_URL:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
