@@ -11,9 +11,9 @@
     "test:workflow-input-contract": "node --test scripts/ci/workflow-input-contract.test.mjs"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.2.2",
+    "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.0",
-    "markdownlint-cli2": "^0.23.2"
+    "markdownlint-cli2": "^0.23.3"
   },
   "overrides": {
     "smol-toml": "^1.8.0"
