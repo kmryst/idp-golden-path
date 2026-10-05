@@ -419,6 +419,8 @@ PR 作成 job は `steps` を実行せず、`removal.json` を信頼できる ch
 
 撤去 PR が開いている間も、毎週の probe が通れば同じ PR が更新されるだけで、job は緑のままです。
 
+実地検証の記録: [verification/2026-10-05-dependabot-ignore-removal-pr](./verification/2026-10-05-dependabot-ignore-removal-pr/README.md)
+
 ## `UNBLOCKED`（赤 exit 10）が出たときの手順（消費側）
 
 1. Job Summary の probe 表と、追跡 Issue に自動投稿された記録コメントを読む

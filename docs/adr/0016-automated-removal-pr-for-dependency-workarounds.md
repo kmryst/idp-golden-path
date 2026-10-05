@@ -126,6 +126,7 @@ Issue #305（typescript 7）の解除条件には `build:all` が TypeScript 7 �
 - [ADR-0008](./0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) — reusable workflow の契約。消費側の挙動は変えない
 - [docs/operations/dependency-unblock-check.md](../operations/dependency-unblock-check.md) — Dependabot ignore の運用正本
 - [docs/operations/security-scanning.md](../operations/security-scanning.md) — resolutions / overrides / 監査例外の運用正本
+- [検証記録 2026-10-05](../operations/verification/2026-10-05-dependabot-ignore-removal-pr/README.md) — Dependabot ignore の撤去 PR の実地検証（解除不可 / 作成と冪等性 / 機構の故障）
 - Issue #310 — 本 ADR の対象
 - Issue #305 — typescript 7 の ignore の追跡 Issue（`steps` の変更）
 - Issue #146 — Issue コメントが見落とされた例
