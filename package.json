@@ -14,8 +14,5 @@
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.0",
     "markdownlint-cli2": "^0.23.3"
-  },
-  "overrides": {
-    "smol-toml": "^1.8.0"
   }
 }
