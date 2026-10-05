@@ -46,6 +46,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { AuditPolicyError, escapeMarkdown } from "./npm-audit-policy.mjs";
+import {
+  REMOVAL_REQUEST_FILENAME,
+  assertRemovalArtifactFiles as assertOnlyRemovalRequest,
+  readRemovalRequestFile,
+  workflowRunUrl,
+} from "./removal-request.mjs";
 import { parseYarnAuditOutput } from "./yarn-audit-policy.mjs";
 
 const GHSA_PATTERN = /^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/;
@@ -364,7 +370,8 @@ export function renderProbeSummary(results, skipped) {
 // PR 作成 job は信頼できる checkout から package.json・台帳・PR 本文を自分で生成し、
 // pattern は台帳の probe 付きエントリで package.json にも存在するものだけを許可する。
 // lockfile は PR に含めず、変わる場合は人が `yarn install` を 1 コミット足す（案 A）
-export const REMOVAL_REQUEST_FILENAME = "removal.json";
+// artifact の検査と読み込みは scripts/ci/removal-request.mjs に共通化した（Issue #310）
+export { REMOVAL_REQUEST_FILENAME };
 
 export function parseRemovalRequest(raw) {
   let parsed;
@@ -411,14 +418,7 @@ export function parseRemovalRequest(raw) {
 // artifact に removal.json 以外のファイルがあれば、probe job が差分や本文を
 // 持ち込もうとしているとみなして拒否する
 export function assertRemovalArtifactFiles(files) {
-  const sorted = [...files].sort();
-  if (sorted.length !== 1 || sorted[0] !== REMOVAL_REQUEST_FILENAME) {
-    throw new AuditPolicyError(
-      `removal artifact must contain only ${REMOVAL_REQUEST_FILENAME} (found: ${
-        sorted.length === 0 ? "nothing" : sorted.join(", ")
-      })`,
-    );
-  }
+  assertOnlyRemovalRequest(files, AuditPolicyError);
 }
 
 // 信頼できる checkout の台帳と package.json で pattern を許可リスト照合する。
@@ -958,13 +958,8 @@ function runApplyRemoval() {
     );
   }
 
-  assertRemovalArtifactFiles(
-    readdirSync(requestDir, { recursive: true, withFileTypes: true })
-      .filter((dirent) => !dirent.isDirectory())
-      .map((dirent) => dirent.name),
-  );
   const request = parseRemovalRequest(
-    readFileSync(join(requestDir, REMOVAL_REQUEST_FILENAME), "utf8"),
+    readRemovalRequestFile(requestDir, AuditPolicyError),
   );
 
   const registry = readRegistry();
@@ -991,11 +986,7 @@ function runApplyRemoval() {
     "utf8",
   );
 
-  const { GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID } = process.env;
-  const runUrl =
-    GITHUB_SERVER_URL && GITHUB_REPOSITORY && GITHUB_RUN_ID
-      ? `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`
-      : null;
+  const runUrl = workflowRunUrl();
   mkdirSync(prDir, { recursive: true });
   writeFileSync(
     join(prDir, "pull-request-body.md"),

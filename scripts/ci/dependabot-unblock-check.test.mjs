@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  REMOVAL_PR_TITLE,
   UnblockCheckError,
+  authorizeUnblockRemoval,
   checkLabeledIssuesCovered,
   checkLedgerSync,
   checkReviewDeadlines,
@@ -14,10 +26,15 @@ import {
   commentMarker,
   decideVerdict,
   extractIgnoreEntries,
+  formatLedger,
   parseLedger,
+  parseUnblockRemovalRequest,
   probeEnvironment,
   postUnblockComments,
+  removeIgnoreEntries,
+  removeLedgerEntries,
   renderSummary,
+  runApplyRemoval,
   runFull,
   runProbes,
   runSync,
@@ -901,6 +918,321 @@ test("runFull does not run probes while the mechanism is broken", async () => {
     github.calls.filter(([name]) => name === "createIssueComment").length,
     0,
   );
+});
+
+// ---------------------------------------------------------------------------
+// 撤去 PR（Issue #310）
+//
+// 本リポジトリ自身の実行では、UNBLOCKED を Issue コメント + exit 10 で知らせる代わりに、
+// 撤去する ignore の識別子だけを removal.json に書き、後続の job が撤去 PR を作る。
+// PR 作成 job は removal.json を信頼できる checkout の台帳と dependabot.yml で許可リスト照合し、
+// 差分（ignore ブロックと台帳エントリの削除）と PR 本文を自分で生成する
+// ---------------------------------------------------------------------------
+
+const FIXTURE_NAMES = ["idp-golden-path", "terraform-hannibal", "ticket-c2c-platform"];
+
+function keysOf(entries) {
+  return entries.map((entry) => `${entry.directory} ${entry.dependencyName}`);
+}
+
+test("removing each ignore entry keeps the others in every repository's dependabot.yml", () => {
+  for (const name of FIXTURE_NAMES) {
+    const source = fixture(name);
+    const entries = extractIgnoreEntries(source);
+    for (const target of entries) {
+      const result = removeIgnoreEntries(source, [target]);
+      assert.deepEqual(
+        keysOf(extractIgnoreEntries(result)),
+        keysOf(entries.filter((entry) => entry !== target)),
+        `${name}: ${target.dependencyName}`,
+      );
+      // 7 項目コメントもエントリと一緒に消える
+      assert.equal(
+        result.includes(`# 追跡: Issue #${target.trackingIssue}\n`) &&
+          entries.filter((entry) => entry.trackingIssue === target.trackingIssue)
+            .length === 1,
+        false,
+        `${name}: tracking comment of ${target.dependencyName} remains`,
+      );
+      // 削除した行以外は 1 行も変わらない（他のコメントを壊さない）
+      const kept = result.split("\n");
+      const original = source.split("\n");
+      let cursor = 0;
+      for (const line of kept) {
+        while (cursor < original.length && original[cursor] !== line) {
+          cursor += 1;
+        }
+        assert.ok(cursor < original.length, `${name}: unexpected line ${line}`);
+        cursor += 1;
+      }
+    }
+  }
+});
+
+test("removing every entry of an ignore block also removes the ignore key", () => {
+  for (const name of FIXTURE_NAMES) {
+    const source = fixture(name);
+    const entries = extractIgnoreEntries(source);
+    const result = removeIgnoreEntries(source, entries);
+    assert.deepEqual(extractIgnoreEntries(result), [], name);
+    assert.doesNotMatch(result, /^ {4}ignore:\s*$/m, name);
+    assert.doesNotMatch(result, /# 見直し期限:/, name);
+  }
+});
+
+test("removing an ignore entry that does not exist throws", () => {
+  assert.throws(
+    () =>
+      removeIgnoreEntries(fixture("idp-golden-path"), [
+        { directory: "/backstage", dependencyName: "no-such-package" },
+      ]),
+    /has no ignore entry/,
+  );
+});
+
+test("formatLedger reproduces the ledger files byte for byte", () => {
+  for (const path of [
+    join(REPO_ROOT, "scripts", "ci", "dependabot-unblock.json"),
+    join(BLOCKED_REPO, "scripts", "ci", "dependabot-unblock.json"),
+    join(UNBLOCKED_REPO, "scripts", "ci", "dependabot-unblock.json"),
+  ]) {
+    const raw = readFileSync(path, "utf8");
+    assert.equal(formatLedger(JSON.parse(raw)), raw, path);
+  }
+  assert.equal(formatLedger([]), "[]\n");
+});
+
+test("removeLedgerEntries removes only the named entries", () => {
+  const raw = readFileSync(
+    join(UNBLOCKED_REPO, "scripts", "ci", "dependabot-unblock.json"),
+    "utf8",
+  );
+  const next = removeLedgerEntries(
+    raw,
+    [{ directory: "/", dependencyName: "fixture-unblocked" }],
+    REPOSITORY,
+  );
+  assert.deepEqual(
+    parseLedger(next, REPOSITORY).map((entry) => entry.dependencyName),
+    ["fixture-still-blocked"],
+  );
+  assert.throws(
+    () =>
+      removeLedgerEntries(
+        raw,
+        [{ directory: "/", dependencyName: "no-such-package" }],
+        REPOSITORY,
+      ),
+    /does not contain every entry/,
+  );
+});
+
+function removalRequest(entries) {
+  return JSON.stringify({ entries });
+}
+
+const VALID_REQUEST_ENTRY = {
+  directory: "/",
+  "dependency-name": "fixture-unblocked",
+  "resolved-version": "9.0.0",
+};
+
+test("parses a removal request with identifiers only", () => {
+  assert.deepEqual(parseUnblockRemovalRequest(removalRequest([VALID_REQUEST_ENTRY])), [
+    { directory: "/", dependencyName: "fixture-unblocked", resolvedVersion: "9.0.0" },
+  ]);
+});
+
+test("rejects removal requests that carry anything beyond identifiers", () => {
+  const cases = [
+    ["not json", /valid JSON/],
+    [JSON.stringify([]), /JSON object/],
+    [JSON.stringify({ entries: [VALID_REQUEST_ENTRY], body: "x" }), /exactly entries/],
+    [removalRequest([]), /non-empty array/],
+    [removalRequest([{ ...VALID_REQUEST_ENTRY, steps: ["curl x | sh"] }]), /must contain exactly/],
+    [removalRequest([{ ...VALID_REQUEST_ENTRY, directory: "/../etc" }]), /repository path/],
+    [removalRequest([{ ...VALID_REQUEST_ENTRY, "dependency-name": "a b" }]), /package name/],
+    [
+      removalRequest([{ ...VALID_REQUEST_ENTRY, "resolved-version": "1.0.0\n- [x] ok" }]),
+      /not a version/,
+    ],
+    [removalRequest([VALID_REQUEST_ENTRY, VALID_REQUEST_ENTRY]), /duplicates/],
+  ];
+  for (const [raw, pattern] of cases) {
+    assert.throws(() => parseUnblockRemovalRequest(raw), pattern, raw);
+  }
+});
+
+test("authorizes only probe: true ledger entries that have an ignore", () => {
+  const ledger = parseLedger(
+    JSON.stringify([
+      ledgerEntry(),
+      ledgerEntry({
+        "dependency-name": "eslint",
+        probe: false,
+        "probe-skip-reason": "方針",
+        spec: undefined,
+        steps: undefined,
+      }),
+    ]),
+    REPOSITORY,
+  );
+  const ignoreEntries = [
+    { directory: "/backstage", dependencyName: "jsdom" },
+    { directory: "/backstage", dependencyName: "eslint" },
+  ];
+  const request = (dependencyName) => [
+    { directory: "/backstage", dependencyName, resolvedVersion: "30.0.0" },
+  ];
+
+  assert.equal(
+    authorizeUnblockRemoval(request("jsdom"), ledger, ignoreEntries)[0].trackingIssue,
+    146,
+  );
+  assert.throws(
+    () => authorizeUnblockRemoval(request("eslint"), ledger, ignoreEntries),
+    /not a probe: true ledger entry/,
+  );
+  assert.throws(
+    () => authorizeUnblockRemoval(request("react"), ledger, ignoreEntries),
+    /not a probe: true ledger entry/,
+  );
+  assert.throws(
+    () => authorizeUnblockRemoval(request("jsdom"), ledger, []),
+    /has no ignore in dependabot.yml/,
+  );
+});
+
+test("verdict is UNBLOCKED with exit 0 when a removal pull request is created", () => {
+  const verdict = decideVerdict(
+    [],
+    [{ dependencyName: "jsdom", resolvedVersion: "30.0.0", trackingIssue: 146 }],
+    1,
+    { removalPullRequest: true },
+  );
+  assert.equal(verdict.kind, "UNBLOCKED");
+  assert.equal(verdict.exitCode, 0);
+  assert.match(verdict.headline, /ignore の撤去 PR を作成します（#146）/);
+});
+
+test("runFull with a removal directory writes removal.json instead of commenting", async () => {
+  const removalDir = mkdtempSync(join(tmpdir(), "unblock-removal-"));
+  try {
+    const github = fixtureGitHub(UNBLOCKED_REPO_ISSUES);
+    const outcome = await runFull(
+      UNBLOCKED_REPO,
+      fixtureDeps(UNBLOCKED_REPO, { github }),
+      { ...OPTIONS, removalDir },
+    );
+    assert.equal(outcome.verdict.exitCode, 0);
+    assert.equal(outcome.removal, true);
+    assert.equal(
+      github.calls.filter(([name]) => name === "createIssueComment").length,
+      0,
+    );
+    assert.deepEqual(readdirSync(removalDir), ["removal.json"]);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(removalDir, "removal.json"), "utf8")),
+      { entries: [VALID_REQUEST_ENTRY] },
+    );
+  } finally {
+    rmSync(removalDir, { recursive: true, force: true });
+  }
+});
+
+test("runFull with a removal directory writes nothing while still blocked", async () => {
+  const removalDir = join(mkdtempSync(join(tmpdir(), "unblock-removal-")), "out");
+  try {
+    const outcome = await runFull(BLOCKED_REPO, fixtureDeps(BLOCKED_REPO), {
+      ...OPTIONS,
+      removalDir,
+    });
+    assert.equal(outcome.verdict.exitCode, 0);
+    assert.equal(outcome.removal, false);
+    assert.equal(existsSync(removalDir), false);
+  } finally {
+    rmSync(dirname(removalDir), { recursive: true, force: true });
+  }
+});
+
+function applyRemovalSandbox(requestFiles) {
+  const base = mkdtempSync(join(tmpdir(), "unblock-apply-"));
+  const rootDir = join(base, "repo");
+  cpSync(UNBLOCKED_REPO, rootDir, { recursive: true });
+  const requestDir = join(base, "request");
+  mkdirSync(requestDir);
+  for (const [name, content] of Object.entries(requestFiles)) {
+    writeFileSync(join(requestDir, name), content, "utf8");
+  }
+  return { base, rootDir, requestDir, prDir: join(base, "pr") };
+}
+
+test("apply-removal removes the ignore and ledger entry and renders the pull request", () => {
+  const sandbox = applyRemovalSandbox({
+    "removal.json": removalRequest([VALID_REQUEST_ENTRY]),
+  });
+  try {
+    runApplyRemoval(sandbox.rootDir, {
+      ...sandbox,
+      repository: REPOSITORY,
+      runUrl: "https://github.com/kmryst/idp-golden-path/actions/runs/1",
+    });
+    const dependabot = readFileSync(
+      join(sandbox.rootDir, ".github", "dependabot.yml"),
+      "utf8",
+    );
+    assert.deepEqual(keysOf(extractIgnoreEntries(dependabot)), ["/ fixture-still-blocked"]);
+    assert.doesNotMatch(dependabot, /Issue #9002/);
+    // 撤去後も ignore と台帳は 1:1
+    assert.equal(runSync(sandbox.rootDir, OPTIONS).verdict.kind, "OK");
+
+    const body = readFileSync(join(sandbox.prDir, "pull-request-body.md"), "utf8");
+    assert.match(body, /^Closes #9002$/m);
+    assert.match(body, /^Refs #310$/m);
+    assert.match(body, /actions\/runs\/1/);
+    assert.equal(
+      readFileSync(join(sandbox.prDir, "pull-request-title.txt"), "utf8"),
+      `${REMOVAL_PR_TITLE}\n`,
+    );
+  } finally {
+    rmSync(sandbox.base, { recursive: true, force: true });
+  }
+});
+
+test("apply-removal rejects an artifact that carries any other file", () => {
+  const sandbox = applyRemovalSandbox({
+    "removal.json": removalRequest([VALID_REQUEST_ENTRY]),
+    "dependabot.yml": "version: 2\n",
+  });
+  try {
+    assert.throws(
+      () => runApplyRemoval(sandbox.rootDir, { ...sandbox, repository: REPOSITORY }),
+      /must contain only removal.json/,
+    );
+    // 作業ツリーは書き換えない
+    assert.equal(
+      readFileSync(join(sandbox.rootDir, ".github", "dependabot.yml"), "utf8"),
+      readFileSync(join(UNBLOCKED_REPO, ".github", "dependabot.yml"), "utf8"),
+    );
+  } finally {
+    rmSync(sandbox.base, { recursive: true, force: true });
+  }
+});
+
+test("apply-removal rejects a request outside the ledger", () => {
+  const sandbox = applyRemovalSandbox({
+    "removal.json": removalRequest([
+      { ...VALID_REQUEST_ENTRY, "dependency-name": "not-in-ledger" },
+    ]),
+  });
+  try {
+    assert.throws(
+      () => runApplyRemoval(sandbox.rootDir, { ...sandbox, repository: REPOSITORY }),
+      /not a probe: true ledger entry/,
+    );
+  } finally {
+    rmSync(sandbox.base, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

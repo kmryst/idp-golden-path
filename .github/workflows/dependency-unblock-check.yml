@@ -11,6 +11,12 @@
 #   朗報を赤にしているのは、新インフラを足さずに人へ届く唯一の確実な経路が
 #   GitHub Actions の失敗通知だから（ADR-0013）
 #
+# 本リポジトリ自身の実行（Issue #310、ADR-0016）だけは UNBLOCKED の扱いが違う。
+#   UNBLOCKED は緑 exit 0 になり、後続の Dependabot Ignore Removal PR job が
+#   GitHub App（kmryst-dependency-bot）名義で ignore の撤去 PR を作る。追跡 Issue へのコメントはしない。
+#   撤去 PR は PR 一覧に残り続けるため、赤の通知と Issue コメント（見落とされた実例: #146）の代わりになる。
+#   消費側（workflow_call）は App をインストールしていないため、従来どおり exit 10 + コメントのまま
+#
 # 【セキュリティ契約】pull_request / pull_request_target トリガーを張ってはならない。
 # 台帳（scripts/ci/dependabot-unblock.json）は任意のシェルコマンドを `steps` として運び、
 # このジョブは `issues: write` を持つ。fork PR から本 workflow に到達する経路を作らないこと。
@@ -80,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     # probe は install + build + test を回すため既定より長く取る
     timeout-minutes: 30
+    outputs:
+      removal: ${{ steps.check.outputs.removal }}
     steps:
       # caller のトリガー制限（3 種）は散文の契約だけでは強制できないため、callee 側でも拒否する。
       # 台帳の steps は任意のシェルコマンドであり、PR 由来の内容を実行させてはならない
@@ -167,17 +175,28 @@ jobs:
           path: .idp-golden-path-workflow
           sparse-checkout: |
             scripts/ci/npm-audit-policy.mjs
+            scripts/ci/removal-request.mjs
             scripts/ci/dependabot-unblock-check.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
       # exit 10（UNBLOCKED）と exit 1（MECHANISM）はどちらも赤にするが、
-      # ログから区別できるよう exit code はそのまま伝播させる
+      # ログから区別できるよう exit code はそのまま伝播させる。
+      # 本リポジトリ自身の実行では IDP_UNBLOCK_REMOVAL_DIR を渡し、UNBLOCKED のときは
+      # 撤去する ignore の識別子だけを removal.json に書いて exit 0 で終える（Issue #310）。
+      # 消費側では空文字になり、従来どおり exit 10 + 追跡 Issue へのコメントになる
       - name: Run dependency unblock check
+        id: check
         env:
           GITHUB_TOKEN: ${{ github.token }}
           UNBLOCK_LEDGER_PATH: ${{ inputs['ledger-path'] }}
           MODE: ${{ inputs.mode || 'full' }}
+          IDP_UNBLOCK_REMOVAL_DIR: >-
+            ${{
+              github.repository == 'kmryst/idp-golden-path' &&
+              format('{0}/dependabot-ignore-removal', runner.temp) ||
+              ''
+            }}
         run: |
           script="$GITHUB_WORKSPACE/scripts/ci/dependabot-unblock-check.mjs"
           if [[ "$GITHUB_REPOSITORY" != "kmryst/idp-golden-path" ]]; then
@@ -191,7 +210,11 @@ jobs:
 
           case "$status" in
             0)
-              echo "OK: still blocked"
+              if [[ -f "$IDP_UNBLOCK_REMOVAL_DIR/removal.json" ]]; then
+                echo "UNBLOCKED: the ignore removal pull request will be created by the next job"
+              else
+                echo "OK: still blocked"
+              fi
               ;;
             10)
               echo "::error::UNBLOCKED: an ignored dependency now builds. Remove the ignore (see the Job Summary)"
@@ -201,3 +224,130 @@ jobs:
               ;;
           esac
           exit "$status"
+
+      - name: Upload ignore removal request
+        if: ${{ steps.check.outputs.removal == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependabot-ignore-removal
+          path: ${{ runner.temp }}/dependabot-ignore-removal
+          if-no-files-found: error
+          retention-days: 7
+
+  # 解除可能と判定された ignore の撤去 PR を作る（Issue #310、ADR-0016）。
+  # 台帳の steps（任意のシェルコマンド）は前の job で実行済みで、この job は一切 spawn しない。
+  # 前の job が出した撤去対象の識別子（artifact の removal.json）を、信頼できる checkout の
+  # 台帳（probe: true）と dependabot.yml で許可リスト照合し、ignore ブロック（7 項目コメント込み）と
+  # 台帳エントリの削除・PR 本文の生成をこの job が自分で行う（ADR-0015 選択肢 8 と同じ信頼境界）。
+  # トークンは GitHub App（kmryst-dependency-bot）の installation token。GITHUB_TOKEN で作った PR では
+  # required status checks が起動しないため。権限は Contents / Pull requests の Read and write のみ。
+  # .github/dependabot.yml は .github/workflows/ 配下ではないため workflows 権限は要らない。
+  # 本リポジトリ固有の処理であり、消費側（workflow_call）では実行しない
+  dependabot-ignore-removal-pr:
+    name: Dependabot Ignore Removal PR
+    needs: dependency-unblock-check
+    # 機構の故障（exit 1）の場合は needs の暗黙の success() で skip される
+    if: >-
+      ${{
+        github.repository == 'kmryst/idp-golden-path' &&
+        needs.dependency-unblock-check.outputs.removal == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Download ignore removal request
+        uses: actions/download-artifact@v8
+        with:
+          name: dependabot-ignore-removal
+          path: ${{ runner.temp }}/dependabot-ignore-removal
+
+      # 信頼境界: artifact から受け取るのは removal.json（撤去する ignore の識別子と解決版）だけ。
+      # removal.json 以外のファイル、台帳の probe: true エントリ以外、余分なフィールドは拒否して赤にする
+      - name: Apply authorized removal to the working tree
+        id: apply
+        env:
+          IDP_UNBLOCK_REMOVAL_DIR: ${{ runner.temp }}/dependabot-ignore-removal
+          IDP_UNBLOCK_PR_DIR: ${{ runner.temp }}/dependabot-ignore-pr
+        run: |
+          node scripts/ci/dependabot-unblock-check.mjs apply-removal
+          echo "title=$(head -n 1 "$IDP_UNBLOCK_PR_DIR/pull-request-title.txt")" >> "$GITHUB_OUTPUT"
+          git --no-pager diff --stat
+          # 生成した差分が想定の 2 ファイルに限られることを確認する
+          changed="$(git --no-pager diff --name-only | sort | tr '\n' ' ')"
+          if [[ "$changed" != ".github/dependabot.yml scripts/ci/dependabot-unblock.json " ]]; then
+            echo "::error::unexpected files changed by apply-removal: $changed"
+            exit 1
+          fi
+
+      # 撤去後の作業ツリーで ignore と台帳が 1:1 であること（ignore 規約の一致）を、
+      # 毎週の検査と同じ sync で確かめる（ネットワークもコマンド実行もしない）
+      - name: Check ledger sync after the removal
+        run: node scripts/ci/dependabot-unblock-check.mjs sync
+
+      # actions/create-github-app-token v3 は app-id 入力を deprecated にしており、
+      # 推奨の client-id（App の Client ID。secret ではない）を variable から渡す
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEPENDENCY_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDENCY_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Resolve GitHub App bot user
+        id: bot-user
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      # ignore の撤去は lockfile に影響しないため、常に通常の PR（Draft にしない）
+      - name: Create or update removal pull request
+        id: create-pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: dependency-bot/dependabot-ignore-removal
+          delete-branch: true
+          add-paths: |
+            .github/dependabot.yml
+            scripts/ci/dependabot-unblock.json
+          commit-message: ${{ steps.apply.outputs.title }}
+          committer: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
+          author: ${{ steps.bot-user.outputs.name }} <${{ steps.bot-user.outputs.email }}>
+          title: ${{ steps.apply.outputs.title }}
+          body-path: ${{ runner.temp }}/dependabot-ignore-pr/pull-request-body.md
+          draft: false
+          labels: |
+            type:chore
+            area:ci-cd
+            risk:low
+            cost:none
+
+      - name: Record pull request
+        env:
+          OPERATION: ${{ steps.create-pr.outputs.pull-request-operation }}
+          PR_URL: ${{ steps.create-pr.outputs.pull-request-url }}
+        run: |
+          {
+            echo "## Dependabot ignore removal pull request"
+            echo ""
+            echo "- Operation: ${OPERATION:-none}"
+            echo "- Pull request: ${PR_URL:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
