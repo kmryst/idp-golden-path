@@ -33,6 +33,10 @@ ADR-0015 で脆弱性以外の yarn resolutions に導入した「解除可能�
   他の 3 つは後続の PR で同じ方式に揃える（各 PR で運用正本を更新する）。npm overrides は 2 本目の PR で実装した
 - npm overrides は、一部の適用先（ルート / skeleton の片方）でだけ stale なエントリを自動では外さず、赤にして人に適用先の見直しを求める。
   ルートと skeleton に同じ overrides を入れることが運用上の不変条件であり、片方だけ外す PR を自動で作るとその不変条件を崩すため
+- npm overrides の「不要」は、全部を一度に外してではなく 1 件ずつ外して判定し、撤去候補をまとめて外した状態でも
+  候補の台帳記載 advisory が severity を問わず再出現しないことを確かめる（再出現した候補は見送る）。
+  全部を一度に外すと、ある override を外したことで依存グラフから消えた依存に対する別の override が不要に見え、
+  まだ必要な override の撤去 PR が立つため（#315 のレビュー）
 
 運用手順の正本は、Dependabot ignore は [docs/operations/dependency-unblock-check.md](../operations/dependency-unblock-check.md)、
 それ以外は [docs/operations/security-scanning.md](../operations/security-scanning.md) とする。

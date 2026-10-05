@@ -12,9 +12,14 @@
 // - stale モード（週次 / 手動）: 台帳の overrides を外した一時プロジェクトで lockfile を
 //   再解決（npm install --package-lock-only、作業ツリーは汚さない）して audit を実行し、
 //   台帳に記録された advisory が再出現するかを実測する。
-//   全ての適用先（directories）で再出現しない overrides は「解除可能」として、撤去する
-//   pattern の一覧を removal.json に書き出し（撤去 PR はワークフロー側が作る。Issue #310、ADR-0016）、
-//   一部のディレクトリでだけ再出現しない overrides は適用先の見直しが要るため fail する
+//   判定はエントリごとに「そのエントリだけを外し、他の overrides は残した」一時プロジェクトで行う。
+//   全部を一度に外すと、override A を外したことで依存グラフから消えた依存に対する override B が
+//   「再出現しない = 不要」に見え、A を残したまま B だけ外す撤去 PR が立ってしまうため（#315 のレビュー）。
+//   全ての適用先（directories）で再出現しない overrides は「解除可能」の候補とし、候補をまとめて外した
+//   状態で、候補の台帳 advisory が severity を問わず再出現しないことを確かめてから、撤去する
+//   pattern の一覧を removal.json に書き出す（撤去 PR はワークフロー側が作る。Issue #310、ADR-0016）。
+//   まとめて外すと再出現する候補は今回は外さない（見送り）。一部のディレクトリでだけ再出現しない
+//   overrides は適用先の見直しが要るため fail する
 // - apply-removal モード（撤去 PR 作成 job）: artifact の removal.json を信頼できる checkout の
 //   台帳と package.json で許可リスト照合し、package.json の overrides と台帳を書き換え、
 //   PR のタイトル・本文・Draft の要否を書き出す。npm もネットワークも使わない
@@ -852,53 +857,113 @@ function highOrCriticalKeys(advisories) {
   );
 }
 
-// 撤去後の状態で High / Critical が増えないこと（他の overrides との相互作用や、台帳未記載の
-// advisory の見落とし対策）を確かめ、lockfile が変わるかを測る。新たな High / Critical が
-// 出た場合は機構の故障として fail し、撤去 PR を作らない
+// 撤去後の状態で High / Critical が増えないこと（台帳未記載の advisory の見落とし対策）を確かめる。
+// 新たな High / Critical が出た場合は機構の故障として fail し、撤去 PR を作らない
 export function findIntroducedAdvisories(baseline, after) {
   const before = highOrCriticalKeys(baseline);
   return [...highOrCriticalKeys(after)].filter((key) => !before.has(key));
 }
 
-function measureRemoval(directory, entriesForDirectory) {
-  const baselineDir = buildUnpinnedProject(directory, []);
-  let baseline;
-  try {
-    baseline = auditProject(baselineDir, directory);
-  } finally {
-    rmSync(baselineDir, { recursive: true, force: true });
-  }
-
-  const removedDir = buildUnpinnedProject(directory, entriesForDirectory);
-  try {
-    resolveLockfile(removedDir, directory);
-    const introduced = findIntroducedAdvisories(baseline, auditProject(removedDir, directory));
-    if (introduced.length > 0) {
-      throw new AuditPolicyError(
-        `removing ${entriesForDirectory
-          .map((entry) => entry.pattern)
-          .join(", ")} in ${directory} introduces High / Critical advisories: ${introduced.join("; ")}`,
-      );
+// stale 判定。各エントリを、そのエントリだけを外し他の overrides を残した状態で、適用先ごとに測る。
+// measureAdvisories(directory, entriesToRemove) は lockfile を再解決した後の audit の advisory を返す
+export function inventoryOverrides(registry, measureAdvisories) {
+  const needed = [];
+  const stale = [];
+  const unrecorded = [];
+  for (const entry of registry) {
+    for (const directory of entry.directories) {
+      const result = evaluateStaleness([entry], {
+        [directory]: measureAdvisories(directory, [entry]),
+      });
+      needed.push(...result.needed);
+      stale.push(...result.stale);
+      unrecorded.push(...result.unrecorded);
     }
-    return (
-      readFileSync(join(removedDir, "package-lock.json"), "utf8") !==
-      readFileSync(join(REPO_ROOT, directory, "package-lock.json"), "utf8")
-    );
-  } finally {
-    rmSync(removedDir, { recursive: true, force: true });
   }
+  return { pass: stale.length === 0, needed, stale, unrecorded };
 }
 
-function writeRemovalRequest(removable, outputDir) {
-  let lockfileChanges = false;
-  for (const directory of NPM_PROJECT_DIRECTORIES) {
-    const entriesForDirectory = removable.filter((entry) =>
-      entry.directories.includes(directory),
-    );
-    if (entriesForDirectory.length > 0 && measureRemoval(directory, entriesForDirectory)) {
-      lockfileChanges = true;
+// 撤去集合の検証。候補をまとめて外した状態で、候補の台帳 advisory が severity を問わず
+// 再出現しないことを確かめる。再出現した候補は今回は外さず（deferred）、残りで測り直す。
+// 候補が減るたびに測り直すので、返す removable は「この集合をまとめて外しても、どの台帳 advisory も
+// 再出現しない」集合になる。measureRemovalState(directory, entries) は
+// { baseline, advisories, lockfileChanged } を返す（baseline は撤去前の audit 結果）
+export function verifyRemovalSet(candidates, measureRemovalState) {
+  let removable = [...candidates];
+  const deferred = [];
+
+  while (removable.length > 0) {
+    const states = {};
+    for (const directory of NPM_PROJECT_DIRECTORIES) {
+      const entriesForDirectory = removable.filter((entry) =>
+        entry.directories.includes(directory),
+      );
+      if (entriesForDirectory.length > 0) {
+        states[directory] = measureRemovalState(directory, entriesForDirectory);
+      }
     }
+
+    const reappeared = removable.filter((entry) =>
+      entry.directories.some((directory) => {
+        const ghsa = new Set(states[directory].advisories.map((advisory) => advisory.ghsa));
+        return entry.advisories.some((advisory) => ghsa.has(advisory));
+      }),
+    );
+    if (reappeared.length > 0) {
+      deferred.push(...reappeared);
+      removable = removable.filter((entry) => !reappeared.includes(entry));
+      continue;
+    }
+
+    for (const [directory, state] of Object.entries(states)) {
+      const introduced = findIntroducedAdvisories(state.baseline, state.advisories);
+      if (introduced.length > 0) {
+        throw new AuditPolicyError(
+          `removing ${removable
+            .map((entry) => entry.pattern)
+            .join(", ")} in ${directory} introduces High / Critical advisories: ${introduced.join("; ")}`,
+        );
+      }
+    }
+    return {
+      removable,
+      deferred,
+      lockfileChanges: Object.values(states).some((state) => state.lockfileChanged),
+    };
   }
+
+  return { removable: [], deferred, lockfileChanges: false };
+}
+
+function createRemovalStateMeasurer() {
+  const baselines = new Map();
+  return function measureRemovalState(directory, entriesForDirectory) {
+    if (!baselines.has(directory)) {
+      const baselineDir = buildUnpinnedProject(directory, []);
+      try {
+        baselines.set(directory, auditProject(baselineDir, directory));
+      } finally {
+        rmSync(baselineDir, { recursive: true, force: true });
+      }
+    }
+
+    const removedDir = buildUnpinnedProject(directory, entriesForDirectory);
+    try {
+      resolveLockfile(removedDir, directory);
+      return {
+        baseline: baselines.get(directory),
+        advisories: auditProject(removedDir, directory),
+        lockfileChanged:
+          readFileSync(join(removedDir, "package-lock.json"), "utf8") !==
+          readFileSync(join(REPO_ROOT, directory, "package-lock.json"), "utf8"),
+      };
+    } finally {
+      rmSync(removedDir, { recursive: true, force: true });
+    }
+  };
+}
+
+function writeRemovalRequest(removable, lockfileChanges, outputDir) {
   mkdirSync(outputDir, { recursive: true });
   writeFileSync(
     join(outputDir, REMOVAL_REQUEST_FILENAME),
@@ -909,7 +974,6 @@ function writeRemovalRequest(removable, outputDir) {
     )}\n`,
     "utf8",
   );
-  return lockfileChanges;
 }
 
 function writeGitHubOutput(name, value) {
@@ -942,21 +1006,7 @@ function runStale() {
     return;
   }
 
-  const advisoriesByDirectory = {};
-  for (const directory of NPM_PROJECT_DIRECTORIES) {
-    const registryForDirectory = registry.filter((entry) =>
-      entry.directories.includes(directory),
-    );
-    if (registryForDirectory.length === 0) {
-      continue;
-    }
-    advisoriesByDirectory[directory] = measureUnpinnedAdvisories(
-      directory,
-      registryForDirectory,
-    );
-  }
-
-  const result = evaluateStaleness(registry, advisoriesByDirectory);
+  const result = inventoryOverrides(registry, measureUnpinnedAdvisories);
   const removal = selectRemovable(registry, result);
   const summary = renderOverridesSummary(result, removal);
   appendSummary(summary);
@@ -977,14 +1027,40 @@ function runStale() {
       process.exitCode = 1;
       return;
     }
-    const lockfileChanges = writeRemovalRequest(removal.removable, outputDir);
-    process.stdout.write(
-      `removal request written to ${join(outputDir, REMOVAL_REQUEST_FILENAME)} (lockfile changes: ${String(lockfileChanges)})\n`,
-    );
-    writeGitHubOutput("removal", "true");
-    return;
+    const verified = verifyRemovalSet(removal.removable, createRemovalStateMeasurer());
+    const verification = renderRemovalVerificationSummary(verified);
+    appendSummary(verification);
+    process.stdout.write(verification);
+    if (verified.removable.length > 0) {
+      writeRemovalRequest(verified.removable, verified.lockfileChanges, outputDir);
+      process.stdout.write(
+        `removal request written to ${join(outputDir, REMOVAL_REQUEST_FILENAME)} (lockfile changes: ${String(verified.lockfileChanges)})\n`,
+      );
+      writeGitHubOutput("removal", "true");
+      return;
+    }
   }
   writeGitHubOutput("removal", "false");
+}
+
+export function renderRemovalVerificationSummary(verified) {
+  const lines = [
+    "### Removal set verification",
+    "",
+    `- Removable together: ${
+      verified.removable.length === 0
+        ? "none"
+        : verified.removable.map((entry) => escapeMarkdown(entry.pattern)).join(", ")
+    }`,
+  ];
+  if (verified.deferred.length > 0) {
+    lines.push(
+      `- Deferred (a recorded advisory reappears when removed together with the others; re-evaluated next run): ${verified.deferred
+        .map((entry) => escapeMarkdown(entry.pattern))
+        .join(", ")}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 // PR 作成 job 側。artifact（IDP_OVERRIDES_REMOVAL_DIR）の removal.json を検証し、
