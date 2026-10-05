@@ -1,15 +1,25 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { AuditPolicyError } from "./npm-audit-policy.mjs";
 import {
   NPM_PROJECT_DIRECTORIES,
+  REMOVAL_PR_TITLE,
+  applyOverridesRemoval,
+  authorizeOverridesRemoval,
   checkSync,
   evaluateStaleness,
   extractAdvisories,
+  findIntroducedAdvisories,
   parseNonSecurityOverrides,
   parseOverridesRegistry,
+  parseOverridesRemovalRequest,
   renderOverridesSummary,
+  runApplyRemoval,
+  selectRemovable,
 } from "./npm-overrides-audit.mjs";
 
 const GHSA = "GHSA-7w5x-hrqm-74c2";
@@ -455,4 +465,188 @@ test("summary lists unrecorded advisories as a warning", () => {
   assert.match(summary, /Result: passed/);
   assert.match(summary, /Unrecorded High \/ Critical advisories/);
   assert.match(summary, new RegExp(`${OTHER_GHSA} \\(high\\) on smol-toml`));
+});
+
+// ---------------------------------------------------------------------------
+// 撤去 PR（Issue #310、ADR-0016）
+// ---------------------------------------------------------------------------
+
+test("selects only overrides that are stale in every directory as removable", () => {
+  const both = registryEntry();
+  const rootOnly = registryEntry({ pattern: "ms", directories: [ROOT] });
+  const split = registryEntry({ pattern: "argparse", advisories: [OTHER_GHSA] });
+  const result = evaluateStaleness([both, rootOnly, split], {
+    [ROOT]: [advisory({ package: "argparse", ghsa: OTHER_GHSA })],
+    [SKELETON]: [],
+  });
+  const { removable, partial } = selectRemovable([both, rootOnly, split], result);
+  assert.deepEqual(
+    removable.map((entry) => entry.pattern),
+    ["smol-toml", "ms"],
+  );
+  assert.deepEqual(partial, [
+    { pattern: "argparse", staleIn: [SKELETON], neededIn: [ROOT] },
+  ]);
+});
+
+test("summary announces a removal pull request only without partial staleness", () => {
+  const entry = registryEntry();
+  const allStale = evaluateStaleness([entry], { [ROOT]: [], [SKELETON]: [] });
+  assert.match(
+    renderOverridesSummary(allStale, selectRemovable([entry], allStale)),
+    /removable: removal pull request will be created/,
+  );
+  const partial = evaluateStaleness([entry], { [ROOT]: [advisory()], [SKELETON]: [] });
+  const summary = renderOverridesSummary(partial, selectRemovable([entry], partial));
+  assert.match(summary, /blocked \(stale overrides found\)/);
+  assert.match(summary, /smol-toml: stale in .*skeleton, still needed in \./);
+});
+
+test("parses a removal request with pattern names only", () => {
+  assert.deepEqual(
+    parseOverridesRemovalRequest(
+      JSON.stringify({ patterns: ["smol-toml", "@scope/pkg"], lockfileChanges: false }),
+    ),
+    { patterns: ["smol-toml", "@scope/pkg"], lockfileChanges: false },
+  );
+});
+
+test("rejects removal requests that carry anything beyond pattern names", () => {
+  const cases = [
+    "not json",
+    JSON.stringify([]),
+    JSON.stringify({ patterns: ["smol-toml"] }),
+    JSON.stringify({ patterns: ["smol-toml"], lockfileChanges: false, body: "x" }),
+    JSON.stringify({ patterns: [], lockfileChanges: false }),
+    JSON.stringify({ patterns: ["smol-toml@1.0.0"], lockfileChanges: false }),
+    JSON.stringify({ patterns: ["../package"], lockfileChanges: false }),
+    JSON.stringify({ patterns: ["smol-toml", "smol-toml"], lockfileChanges: false }),
+    JSON.stringify({ patterns: ["smol-toml"], lockfileChanges: "false" }),
+  ];
+  for (const raw of cases) {
+    assert.throws(() => parseOverridesRemovalRequest(raw), AuditPolicyError, raw);
+  }
+});
+
+test("authorizes only patterns registered in the security registry", () => {
+  const registry = [registryEntry()];
+  assert.equal(
+    authorizeOverridesRemoval({ patterns: ["smol-toml"] }, registry)[0].pattern,
+    "smol-toml",
+  );
+  assert.throws(
+    () => authorizeOverridesRemoval({ patterns: ["@types/node"] }, registry),
+    /not registered in npm-overrides.json/,
+  );
+});
+
+test("removes overrides from every declared directory and drops an empty overrides key", () => {
+  const smol = registryEntry();
+  const ms = registryEntry({ pattern: "ms", override: "^2.1.3", directories: [ROOT] });
+  const manifests = {
+    [ROOT]: { name: "root", overrides: { "smol-toml": "^1.8.0", ms: "^2.1.3" } },
+    [SKELETON]: { name: "skeleton", overrides: { "smol-toml": "^1.8.0" } },
+  };
+  const removed = applyOverridesRemoval(manifests, [smol, ms], [smol]);
+  assert.deepEqual(removed.manifests, {
+    [ROOT]: { name: "root", overrides: { ms: "^2.1.3" } },
+    [SKELETON]: { name: "skeleton" },
+  });
+  assert.deepEqual(removed.registry, [ms]);
+  // 入力は書き換えない
+  assert.deepEqual(manifests[SKELETON].overrides, { "smol-toml": "^1.8.0" });
+});
+
+test("only High / Critical advisories absent before the removal count as introduced", () => {
+  const baseline = [advisory({ package: "braces", ghsa: OTHER_GHSA })];
+  const after = [
+    advisory({ package: "braces", ghsa: OTHER_GHSA }),
+    advisory({ severity: "moderate" }),
+    advisory({ package: "ms", severity: "critical" }),
+  ];
+  assert.deepEqual(findIntroducedAdvisories(baseline, after), [`ms ${GHSA}`]);
+});
+
+function applySandbox(request, extraFiles = {}) {
+  const base = mkdtempSync(join(tmpdir(), "npm-overrides-apply-"));
+  const rootDir = join(base, "repo");
+  mkdirSync(join(rootDir, "scripts", "ci"), { recursive: true });
+  mkdirSync(join(rootDir, SKELETON), { recursive: true });
+  const entry = registryEntry({ override: "2.0.1", pattern: "argparse" });
+  writeFileSync(
+    join(rootDir, "scripts", "ci", "npm-overrides.json"),
+    `${JSON.stringify([entry], null, 2)}\n`,
+  );
+  for (const directory of [ROOT, SKELETON]) {
+    writeFileSync(
+      join(rootDir, directory, "package.json"),
+      `${JSON.stringify({ name: directory, overrides: { argparse: "2.0.1" } }, null, 2)}\n`,
+    );
+  }
+  const requestDir = join(base, "request");
+  mkdirSync(requestDir);
+  writeFileSync(join(requestDir, "removal.json"), JSON.stringify(request));
+  for (const [name, content] of Object.entries(extraFiles)) {
+    writeFileSync(join(requestDir, name), content);
+  }
+  return { base, rootDir, requestDir, prDir: join(base, "pr") };
+}
+
+test("apply-removal rewrites package.json and the registry and renders a Draft pull request", () => {
+  const sandbox = applySandbox({ patterns: ["argparse"], lockfileChanges: true });
+  try {
+    runApplyRemoval({ ...sandbox, runUrl: "https://example.invalid/runs/1" });
+    for (const directory of [ROOT, SKELETON]) {
+      assert.equal(
+        readFileSync(join(sandbox.rootDir, directory, "package.json"), "utf8"),
+        `${JSON.stringify({ name: directory }, null, 2)}\n`,
+      );
+    }
+    assert.equal(
+      readFileSync(join(sandbox.rootDir, "scripts", "ci", "npm-overrides.json"), "utf8"),
+      "[]\n",
+    );
+    const body = readFileSync(join(sandbox.prDir, "pull-request-body.md"), "utf8");
+    assert.match(body, /この PR は Draft です/);
+    assert.match(body, /^Refs #310$/m);
+    assert.match(body, /runs\/1/);
+    assert.equal(readFileSync(join(sandbox.prDir, "pull-request-draft.txt"), "utf8"), "true\n");
+    assert.equal(
+      readFileSync(join(sandbox.prDir, "pull-request-title.txt"), "utf8"),
+      `${REMOVAL_PR_TITLE}\n`,
+    );
+  } finally {
+    rmSync(sandbox.base, { recursive: true, force: true });
+  }
+});
+
+test("apply-removal renders a ready pull request when the lockfile does not change", () => {
+  const sandbox = applySandbox({ patterns: ["argparse"], lockfileChanges: false });
+  try {
+    runApplyRemoval(sandbox);
+    const body = readFileSync(join(sandbox.prDir, "pull-request-body.md"), "utf8");
+    assert.doesNotMatch(body, /Draft/);
+    assert.equal(readFileSync(join(sandbox.prDir, "pull-request-draft.txt"), "utf8"), "false\n");
+  } finally {
+    rmSync(sandbox.base, { recursive: true, force: true });
+  }
+});
+
+test("apply-removal rejects an artifact with another file or an unregistered pattern", () => {
+  const cases = [
+    [applySandbox({ patterns: ["argparse"], lockfileChanges: false }, { "package.json": "{}" }), /must contain only removal.json/],
+    [applySandbox({ patterns: ["ms"], lockfileChanges: false }), /not registered in npm-overrides.json/],
+  ];
+  for (const [sandbox, pattern] of cases) {
+    try {
+      assert.throws(() => runApplyRemoval(sandbox), pattern);
+      // 作業ツリーは書き換えない
+      assert.match(
+        readFileSync(join(sandbox.rootDir, ROOT, "package.json"), "utf8"),
+        /"argparse": "2\.0\.1"/,
+      );
+    } finally {
+      rmSync(sandbox.base, { recursive: true, force: true });
+    }
+  }
 });

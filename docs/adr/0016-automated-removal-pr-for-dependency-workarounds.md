@@ -30,7 +30,9 @@ ADR-0015 で脆弱性以外の yarn resolutions に導入した「解除可能�
 - **Dependabot ignore（ADR-0013 の変更点）**: 本リポジトリ自身の実行では、`UNBLOCKED` を「赤（exit 10）+ 追跡 Issue へのコメント」から
   「緑（exit 0）+ 撤去 PR」に変える。消費側（`workflow_call`）は従来どおり exit 10 + コメントとし、消費側への撤去 PR 化は本 ADR の対象外とする
 - 実装は Issue #310 の中で 4 つの PR に分ける。本 ADR を追加する PR では Dependabot ignore だけを実装し、
-  他の 3 つは後続の PR で同じ方式に揃える（各 PR で運用正本を更新する）
+  他の 3 つは後続の PR で同じ方式に揃える（各 PR で運用正本を更新する）。npm overrides は 2 本目の PR で実装した
+- npm overrides は、一部の適用先（ルート / skeleton の片方）でだけ stale なエントリを自動では外さず、赤にして人に適用先の見直しを求める。
+  ルートと skeleton に同じ overrides を入れることが運用上の不変条件であり、片方だけ外す PR を自動で作るとその不変条件を崩すため
 
 運用手順の正本は、Dependabot ignore は [docs/operations/dependency-unblock-check.md](../operations/dependency-unblock-check.md)、
 それ以外は [docs/operations/security-scanning.md](../operations/security-scanning.md) とする。
