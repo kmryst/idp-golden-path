@@ -85,6 +85,7 @@ moderate 以下を fail させないのは、Backstage 本体の依存グラフ�
 3. 修正版が無い / 即時対応できない場合（例外運用）:
    - Issue を起票して、除外理由・期限・削除条件を追跡する
    - 本リポジトリ（Yarn）は、後述の `scripts/ci/yarn-audit-exceptions.json` へ期限付き GHSA を登録する
+   - 本リポジトリ（npm のルート / skeleton）は、後述の `scripts/ci/npm-audit-exceptions.json` へ期限付き GHSA を登録する
    - npm の reusable workflow 消費側は、後述の `npm-audit-exceptions` input へ期限付き GHSA を設定する
    - yarn の reusable workflow 消費側は、後述の `yarn-audit-exceptions` input へ期限付き GHSA を設定する
    - 除外は恒久化させず、修正版リリース後に除外を外す PR を作る
@@ -119,6 +120,34 @@ with:
 Yarn 4 の `--ignore` は npm registry の数値 advisory ID を照合するため、GHSA を受け取るこの input の対象外です。
 Yarn と組み合わせて `npm-audit-exceptions` を設定した場合は、設定ミスとして fail します。
 Yarn の一時例外は次節の `yarn-audit-exceptions` / `scripts/ci/yarn-audit-exceptions.json` で扱います。
+
+### ルート / skeleton（npm）の期限付き例外
+
+本リポジトリ自身の `npm Dependency Audit (root)` / `npm Dependency Audit (skeleton)` は `workflow_call` の
+caller を持たず input を渡せないため、yarn 側と同じくリポジトリ内ファイル `scripts/ci/npm-audit-exceptions.json`
+で期限付き例外を宣言します（Issue #300）。評価器は reusable workflow の `npm-audit-exceptions` input と同じ
+`scripts/ci/npm-audit-policy.mjs` で、スキーマ・制約・fail closed の条件は前節と同一です。
+
+```json
+[
+  {
+    "id": "GHSA-xxxx-xxxx-xxxx",
+    "expires": "2026-12-31",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/123"
+  }
+]
+```
+
+- ルートと skeleton で 1 ファイルを共有する。両者は同じ devDependencies（markdownlint-cli2 / commitlint）を持ち、
+  例外は経路ではなく GHSA 単位で判定するため。片方の job でだけ検出されなくなった例外は、
+  その job の Job Summary に stale（`not detected`）として出る
+- 例外が 1 件も無い（`[]`）場合は従来どおり `npm audit --audit-level=high` の素のゲートを実行する
+- 例外がある場合は、dev を omit した runtime audit を例外なしで通してから、full audit の `via` 連鎖を根本 advisory まで
+  たどって判定する。依存元として報告されるだけのパッケージ（例: braces 起因の micromatch / fast-glob / globby /
+  markdownlint-cli2）は名前で登録せず、根本の GHSA 1 件の登録で一緒に一時許可される
+- 期限切れ・上限超過・書式不正は fail closed（Job Summary の `Error:` 行に該当エントリと理由が出る）。
+  検出されなくなった例外は fail させず Job Summary で削除を促す（yarn 側と同じ）
+- 追跡 Issue は yarn 側と同じ advisory なら共用してよい（例: braces の GHSA-vfj7-8cjw-p6xm は #297）
 
 ### yarn の期限付き例外
 
@@ -358,6 +387,8 @@ node scripts/ci/npm-overrides-audit.mjs stale
 
 この npm 依存グラフ（ルート / skeleton）自体は `npm Dependency Audit (root)` /
 `npm Dependency Audit (skeleton)` の 2 job で毎 PR / 週次に監査されます（Issue #263）。
+修正版が無く overrides でも解消できない advisory は、overrides ではなく
+「[ルート / skeleton（npm）の期限付き例外](#ルート--skeletonnpmの期限付き例外)」で扱います。
 
 ## Dependabot の観測面
 

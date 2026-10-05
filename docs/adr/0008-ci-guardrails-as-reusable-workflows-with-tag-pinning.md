@@ -434,6 +434,35 @@ reusable workflow の selftest は「動く経路」だけでなく
 - Issue: [kmryst/idp-golden-path#186](https://github.com/kmryst/idp-golden-path/issues/186)
 - 消費側での実地検証: [kmryst/ticket-c2c-platform#474](https://github.com/kmryst/ticket-c2c-platform/pull/474)
 
+## 追記（2026-10-05）: 本リポジトリ自身の npm audit ゲート（ルート / skeleton）にも期限付き例外を適用する
+
+`npm Dependency Audit (root)` / `npm Dependency Audit (skeleton)`（Issue #263）は例外機構を持たず、
+修正版の無い braces の High（GHSA-vfj7-8cjw-p6xm）1 件で、PR の変更内容と無関係に毎 PR・週次で fail していた。
+追記 2026-08-05 が yarn パスで解消したのと同じ alert fatigue の状態であり、同じ契約を npm 側の自リポジトリ実行にも適用する。
+
+### 採用する契約
+
+- 評価器は新設せず、reusable workflow の `npm-audit-exceptions` input 用の `scripts/ci/npm-audit-policy.mjs`
+  （追記 2026-07-28）をそのまま使う。runtime 依存の事前ゲート、`via` 連鎖を根本 advisory までたどる判定、
+  Critical 不可、期限・書式の検証、未検出例外の警告がすでに実装・テスト済みであり、並行実装を作ると両者の fail closed 条件が乖離する
+- 例外の宣言場所は、input を渡せない自リポジトリ実行のため yarn 側（`scripts/ci/yarn-audit-exceptions.json`）と同じく
+  リポジトリ内ファイル `scripts/ci/npm-audit-exceptions.json` とし、スキーマは input と同一の JSON 配列にする
+- ファイルはルートと skeleton で 1 つを共有する。両者は同じ devDependencies を持ち、例外は GHSA 単位で判定するため。
+  ディレクトリ別のファイルやエントリへの `directories` フィールド追加は、`parseExceptions` の
+  スキーマ（`id` / `expires` / `tracking` の 3 フィールド固定）から外れる独自形式になるため採らない。
+  片方でだけ解消した例外は、その job の Job Summary に stale として出る
+- ファイルが空配列なら従来の `npm audit --audit-level=high` をそのまま実行し、例外なしの既定挙動を変えない
+
+### 影響
+
+- 消費側（`workflow_call`）の挙動・inputs は変えない。`npm-dependency-audit` job は本リポジトリでのみ実行される
+- `npm Dependency Audit` は required status checks ではないため、branch protection の変更は不要
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#300](https://github.com/kmryst/idp-golden-path/issues/300)
+- 追跡 Issue（braces）: [kmryst/idp-golden-path#297](https://github.com/kmryst/idp-golden-path/issues/297)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
