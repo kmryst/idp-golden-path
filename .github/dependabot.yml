@@ -88,6 +88,12 @@ updates:
       # 追跡: Issue #305
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # 検証用ダミー（Issue #310 の実地検証。検証ブランチ 310-verify-ignore-removal-pr 専用で main にはマージしない）。
+      # probe の steps が `true` だけなので必ず UNBLOCKED になり、撤去 PR の自動作成を再現する。
+      # 見直し期限: 2099-01-01（検証用の固定値）
+      # 追跡: Issue #311
+      - dependency-name: "idp-verify-310-dummy"
+        update-types: ["version-update:semver-major"]
 
   # backstage/templates/service-baseline/skeleton は Scaffolder の雛形で、
   # 生成先リポジトリにそのまま展開される独立した npm プロジェクト

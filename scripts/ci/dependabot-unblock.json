@@ -7,5 +7,14 @@
     "steps": ["yarn up typescript@7", "yarn up -R rollup-plugin-dts", "yarn add -D @typescript/typescript6@^6", "yarn lint:all", "yarn build:all"],
     "review-by": "2026-11-02",
     "tracking": "https://github.com/kmryst/idp-golden-path/issues/305"
+  },
+  {
+    "directory": "/backstage",
+    "dependency-name": "idp-verify-310-dummy",
+    "probe": true,
+    "spec": "idp-verify-310-dummy@1",
+    "steps": ["true"],
+    "review-by": "2099-01-01",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/311"
   }
 ]
