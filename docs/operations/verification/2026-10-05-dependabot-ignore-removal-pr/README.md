@@ -27,7 +27,7 @@ run はすべて `Dependency Unblock Check`（`.github/workflows/dependency-unbl
 | `Dependency Unblock Check` | success（緑）。`## OK: still blocked（probe 1 件、全て想定どおり失敗）` |
 | `Dependabot Ignore Removal PR` | skipped（`removal` 出力が `false`） |
 
-#305 の新しい `steps`（`yarn up typescript@7` → `yarn up -R rollup-plugin-dts` → `yarn add -D @typescript/typescript6@^6` →
+Issue #305 の新しい `steps`（`yarn up typescript@7` → `yarn up -R rollup-plugin-dts` → `yarn add -D @typescript/typescript6@^6` →
 `yarn lint:all` → `yarn build:all`）が CI 上で 1〜3 を通過し、上流待ちの `lint:all` で止まることを確認した。
 ローカル（origin/main `bdd8681`、Yarn 4.18.1）では同じ手順で `lint:all` exit 1、`build:all` exit 0 だった。
 
