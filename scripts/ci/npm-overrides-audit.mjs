@@ -15,11 +15,12 @@
 //   判定はエントリごとに「そのエントリだけを外し、他の overrides は残した」一時プロジェクトで行う。
 //   全部を一度に外すと、override A を外したことで依存グラフから消えた依存に対する override B が
 //   「再出現しない = 不要」に見え、A を残したまま B だけ外す撤去 PR が立ってしまうため（#315 のレビュー）。
-//   全ての適用先（directories）で再出現しない overrides は「解除可能」の候補とし、候補をまとめて外した
-//   状態で、候補の台帳 advisory が severity を問わず再出現しないことを確かめてから、撤去する
-//   pattern の一覧を removal.json に書き出す（撤去 PR はワークフロー側が作る。Issue #310、ADR-0016）。
-//   まとめて外すと再出現する候補は今回は外さない（見送り）。一部のディレクトリでだけ再出現しない
-//   overrides は適用先の見直しが要るため fail する
+//   全ての適用先（directories）で台帳の advisory が（severity を問わず）再出現しない overrides を
+//   「解除可能」とし、そのうち台帳順の先頭 1 件だけを removal.json に書き出す（撤去 PR はワークフロー側が
+//   作る。Issue #310、ADR-0016）。撤去 PR 1 本で外すのは、単独で検証済みの 1 件に限る。複数をまとめて
+//   外すと候補どうしの相互作用を検証し切れないため（#315 の 2 回目のレビュー）。残りは翌週以降に 1 件ずつ拾う。
+//   解除可能な override を外すと、外す前に無かった High / Critical が出る場合は機構の故障として fail し、
+//   一部のディレクトリでだけ再出現しない overrides は適用先の見直しが要るため fail する
 // - apply-removal モード（撤去 PR 作成 job）: artifact の removal.json を信頼できる checkout の
 //   台帳と package.json で許可リスト照合し、package.json の overrides と台帳を書き換え、
 //   PR のタイトル・本文・Draft の要否を書き出す。npm もネットワークも使わない
@@ -606,6 +607,12 @@ export function parseOverridesRemovalRequest(raw) {
 // 信頼できる checkout の台帳で pattern を許可リスト照合する。
 // 台帳（セキュリティ起因）のエントリだけを通す。非セキュリティ宣言は棚卸しの対象外なので外さない
 export function authorizeOverridesRemoval(request, registry) {
+  // 撤去 PR 1 本で外すのは、単独で検証済みの 1 件だけ（#315 の 2 回目のレビュー）
+  if (request.patterns.length !== 1) {
+    throw new AuditPolicyError(
+      `removal request must name exactly one override (got ${request.patterns.length})`,
+    );
+  }
   return request.patterns.map((pattern) => {
     const entry = registry.find((candidate) => candidate.pattern === pattern);
     if (entry === undefined) {
@@ -839,16 +846,6 @@ function auditProject(tempDir, directory) {
   return advisories;
 }
 
-function measureUnpinnedAdvisories(directory, registryForDirectory) {
-  const tempDir = buildUnpinnedProject(directory, registryForDirectory);
-  try {
-    resolveLockfile(tempDir, directory);
-    return auditProject(tempDir, directory);
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
 function highOrCriticalKeys(advisories) {
   return new Set(
     advisories
@@ -857,82 +854,90 @@ function highOrCriticalKeys(advisories) {
   );
 }
 
-// 撤去後の状態で High / Critical が増えないこと（台帳未記載の advisory の見落とし対策）を確かめる。
-// 新たな High / Critical が出た場合は機構の故障として fail し、撤去 PR を作らない
+// 撤去後の状態で High / Critical が増えないこと（台帳未記載の advisory の見落とし対策）を確かめる
 export function findIntroducedAdvisories(baseline, after) {
   const before = highOrCriticalKeys(baseline);
   return [...highOrCriticalKeys(after)].filter((key) => !before.has(key));
 }
 
-// stale 判定。各エントリを、そのエントリだけを外し他の overrides を残した状態で、適用先ごとに測る。
-// measureAdvisories(directory, entriesToRemove) は lockfile を再解決した後の audit の advisory を返す
-export function inventoryOverrides(registry, measureAdvisories) {
+// 各エントリを、そのエントリだけを外し他の overrides を残した状態で、適用先ごとに測る。
+// measureRemovalState(directory, [entry]) は { baseline, advisories, lockfileChanged } を返す
+// （baseline は撤去前の audit 結果、advisories は外して lockfile を再解決した後の audit 結果）。
+// この状態は撤去 PR をマージした後の状態そのものなので、stale 判定と撤去前の検証を同じ計測で兼ねる
+export function evaluateOverrides(registry, measureRemovalState) {
   const needed = [];
   const stale = [];
   const unrecorded = [];
+  const states = new Map();
   for (const entry of registry) {
+    const byDirectory = {};
     for (const directory of entry.directories) {
-      const result = evaluateStaleness([entry], {
-        [directory]: measureAdvisories(directory, [entry]),
-      });
+      const state = measureRemovalState(directory, [entry]);
+      byDirectory[directory] = state;
+      const result = evaluateStaleness([entry], { [directory]: state.advisories });
       needed.push(...result.needed);
       stale.push(...result.stale);
       unrecorded.push(...result.unrecorded);
     }
+    states.set(entry.pattern, byDirectory);
   }
-  return { pass: stale.length === 0, needed, stale, unrecorded };
+  return { result: { pass: stale.length === 0, needed, stale, unrecorded }, states };
 }
 
-// 撤去集合の検証。候補をまとめて外した状態で、候補の台帳 advisory が severity を問わず
-// 再出現しないことを確かめる。再出現した候補は今回は外さず（deferred）、残りで測り直す。
-// 候補が減るたびに測り直すので、返す removable は「この集合をまとめて外しても、どの台帳 advisory も
-// 再出現しない」集合になる。measureRemovalState(directory, entries) は
-// { baseline, advisories, lockfileChanged } を返す（baseline は撤去前の audit 結果）
-export function verifyRemovalSet(candidates, measureRemovalState) {
-  let removable = [...candidates];
-  const deferred = [];
+// 撤去 PR 1 本で外すのは 1 件だけ。全ての適用先で解除可能なエントリのうち、台帳順の先頭を選ぶ。
+// 解除可能なエントリはすべて、外したときに新たな High / Critical が出ないことを確かめる
+// （先頭以外も確かめるのは、故障を「翌週に先頭になるまで」隠さないため）
+export function selectSingleRemoval(registry, evaluation) {
+  const { removable, partial } = selectRemovable(registry, evaluation.result);
+  if (partial.length > 0) {
+    return { candidate: null, waiting: [], lockfileChanges: false, partial };
+  }
 
-  while (removable.length > 0) {
-    const states = {};
-    for (const directory of NPM_PROJECT_DIRECTORIES) {
-      const entriesForDirectory = removable.filter((entry) =>
-        entry.directories.includes(directory),
-      );
-      if (entriesForDirectory.length > 0) {
-        states[directory] = measureRemovalState(directory, entriesForDirectory);
-      }
-    }
-
-    const reappeared = removable.filter((entry) =>
-      entry.directories.some((directory) => {
-        const ghsa = new Set(states[directory].advisories.map((advisory) => advisory.ghsa));
-        return entry.advisories.some((advisory) => ghsa.has(advisory));
-      }),
-    );
-    if (reappeared.length > 0) {
-      deferred.push(...reappeared);
-      removable = removable.filter((entry) => !reappeared.includes(entry));
-      continue;
-    }
-
-    for (const [directory, state] of Object.entries(states)) {
+  const problems = [];
+  for (const entry of removable) {
+    for (const [directory, state] of Object.entries(evaluation.states.get(entry.pattern))) {
       const introduced = findIntroducedAdvisories(state.baseline, state.advisories);
       if (introduced.length > 0) {
-        throw new AuditPolicyError(
-          `removing ${removable
-            .map((entry) => entry.pattern)
-            .join(", ")} in ${directory} introduces High / Critical advisories: ${introduced.join("; ")}`,
+        problems.push(
+          `removing ${entry.pattern} in ${directory} introduces High / Critical advisories: ${introduced.join("; ")}`,
         );
       }
     }
-    return {
-      removable,
-      deferred,
-      lockfileChanges: Object.values(states).some((state) => state.lockfileChanged),
-    };
+  }
+  if (problems.length > 0) {
+    throw new AuditPolicyError(problems.join(" / "));
   }
 
-  return { removable: [], deferred, lockfileChanges: false };
+  if (removable.length === 0) {
+    return { candidate: null, waiting: [], lockfileChanges: false, partial: [] };
+  }
+  const [candidate, ...waiting] = removable;
+  return {
+    candidate,
+    waiting,
+    lockfileChanges: Object.values(evaluation.states.get(candidate.pattern)).some(
+      (state) => state.lockfileChanged,
+    ),
+    partial: [],
+  };
+}
+
+export function renderRemovalSelectionSummary(selection) {
+  const lines = [
+    "### Removal selection",
+    "",
+    `- Removed in this run: ${
+      selection.candidate === null ? "none" : escapeMarkdown(selection.candidate.pattern)
+    }`,
+  ];
+  if (selection.waiting.length > 0) {
+    lines.push(
+      `- Waiting (one override per removal pull request): ${selection.waiting
+        .map((entry) => escapeMarkdown(entry.pattern))
+        .join(", ")}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function createRemovalStateMeasurer() {
@@ -963,12 +968,12 @@ function createRemovalStateMeasurer() {
   };
 }
 
-function writeRemovalRequest(removable, lockfileChanges, outputDir) {
+function writeRemovalRequest(candidate, lockfileChanges, outputDir) {
   mkdirSync(outputDir, { recursive: true });
   writeFileSync(
     join(outputDir, REMOVAL_REQUEST_FILENAME),
     `${JSON.stringify(
-      { patterns: removable.map((entry) => entry.pattern), lockfileChanges },
+      { patterns: [candidate.pattern], lockfileChanges },
       null,
       2,
     )}\n`,
@@ -1006,61 +1011,44 @@ function runStale() {
     return;
   }
 
-  const result = inventoryOverrides(registry, measureUnpinnedAdvisories);
-  const removal = selectRemovable(registry, result);
-  const summary = renderOverridesSummary(result, removal);
+  const evaluation = evaluateOverrides(registry, createRemovalStateMeasurer());
+  const summary = renderOverridesSummary(
+    evaluation.result,
+    selectRemovable(registry, evaluation.result),
+  );
   appendSummary(summary);
   process.stdout.write(summary);
 
-  // 一部の適用先でだけ stale なエントリがある間は、人の判断が要るので赤にし、撤去 PR は作らない
-  if (removal.partial.length > 0) {
+  // 一部の適用先でだけ stale なエントリがある間は、人の判断が要るので赤にし、撤去 PR は作らない。
+  // 解除可能なエントリを外すと新たな High / Critical が出る場合は、ここで throw して赤になる
+  const selection = selectSingleRemoval(registry, evaluation);
+  if (selection.partial.length > 0) {
     writeGitHubOutput("removal", "false");
     process.exitCode = 1;
     return;
   }
+  if (selection.candidate === null) {
+    writeGitHubOutput("removal", "false");
+    return;
+  }
 
+  const selectionSummary = renderRemovalSelectionSummary(selection);
+  appendSummary(selectionSummary);
+  process.stdout.write(selectionSummary);
+
+  // 撤去 PR を作る経路（本リポジトリの schedule / workflow_dispatch）が無いローカル実行では、
+  // 従来どおり stale を fail で知らせる
   const outputDir = process.env.IDP_OVERRIDES_REMOVAL_DIR;
-  if (removal.removable.length > 0) {
-    // 撤去 PR を作る経路（本リポジトリの schedule / workflow_dispatch）が無いローカル実行では、
-    // 従来どおり stale を fail で知らせる
-    if (typeof outputDir !== "string" || outputDir === "") {
-      process.exitCode = 1;
-      return;
-    }
-    const verified = verifyRemovalSet(removal.removable, createRemovalStateMeasurer());
-    const verification = renderRemovalVerificationSummary(verified);
-    appendSummary(verification);
-    process.stdout.write(verification);
-    if (verified.removable.length > 0) {
-      writeRemovalRequest(verified.removable, verified.lockfileChanges, outputDir);
-      process.stdout.write(
-        `removal request written to ${join(outputDir, REMOVAL_REQUEST_FILENAME)} (lockfile changes: ${String(verified.lockfileChanges)})\n`,
-      );
-      writeGitHubOutput("removal", "true");
-      return;
-    }
+  if (typeof outputDir !== "string" || outputDir === "") {
+    writeGitHubOutput("removal", "false");
+    process.exitCode = 1;
+    return;
   }
-  writeGitHubOutput("removal", "false");
-}
-
-export function renderRemovalVerificationSummary(verified) {
-  const lines = [
-    "### Removal set verification",
-    "",
-    `- Removable together: ${
-      verified.removable.length === 0
-        ? "none"
-        : verified.removable.map((entry) => escapeMarkdown(entry.pattern)).join(", ")
-    }`,
-  ];
-  if (verified.deferred.length > 0) {
-    lines.push(
-      `- Deferred (a recorded advisory reappears when removed together with the others; re-evaluated next run): ${verified.deferred
-        .map((entry) => escapeMarkdown(entry.pattern))
-        .join(", ")}`,
-    );
-  }
-  return `${lines.join("\n")}\n`;
+  writeRemovalRequest(selection.candidate, selection.lockfileChanges, outputDir);
+  process.stdout.write(
+    `removal request written to ${join(outputDir, REMOVAL_REQUEST_FILENAME)} (lockfile changes: ${String(selection.lockfileChanges)})\n`,
+  );
+  writeGitHubOutput("removal", "true");
 }
 
 // PR 作成 job 側。artifact（IDP_OVERRIDES_REMOVAL_DIR）の removal.json を検証し、

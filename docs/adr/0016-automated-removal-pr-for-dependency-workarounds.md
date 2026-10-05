@@ -33,10 +33,15 @@ ADR-0015 で脆弱性以外の yarn resolutions に導入した「解除可能�
   他の 3 つは後続の PR で同じ方式に揃える（各 PR で運用正本を更新する）。npm overrides は 2 本目の PR で実装した
 - npm overrides は、一部の適用先（ルート / skeleton の片方）でだけ stale なエントリを自動では外さず、赤にして人に適用先の見直しを求める。
   ルートと skeleton に同じ overrides を入れることが運用上の不変条件であり、片方だけ外す PR を自動で作るとその不変条件を崩すため
-- npm overrides の「不要」は、全部を一度に外してではなく 1 件ずつ外して判定し、撤去候補をまとめて外した状態でも
-  候補の台帳記載 advisory が severity を問わず再出現しないことを確かめる（再出現した候補は見送る）。
+- npm overrides の「不要」は、全部を一度に外してではなく、そのエントリだけを外し他は残した状態で 1 件ずつ判定する
+  （台帳記載の advisory が severity を問わず再出現せず、外す前に無かった High / Critical も出ない）。
   全部を一度に外すと、ある override を外したことで依存グラフから消えた依存に対する別の override が不要に見え、
   まだ必要な override の撤去 PR が立つため（#315 のレビュー）
+- 撤去 PR 1 本で外すのは、単独で検証済みの 1 件（台帳順の先頭）に限る。複数をまとめて外し、競合したら測り直す方式は、
+  見送った候補の advisory の照合漏れ・新規 High / Critical の検査漏れ・全件見送りで進まない経路の 3 つの穴が指摘された
+  （#315 の 2 回目のレビュー）。1 件に限れば相互作用の検証が要らず、判定の計測がそのままマージ後の状態の検証になる。
+  代償は複数件が同時に外せるようになったときに 1 週 1 件ずつしか進まないことだが、台帳はほぼ空で件数が少なく実害はない。
+  分割 4（yarn 側）も同じ方式にする
 
 運用手順の正本は、Dependabot ignore は [docs/operations/dependency-unblock-check.md](../operations/dependency-unblock-check.md)、
 それ以外は [docs/operations/security-scanning.md](../operations/security-scanning.md) とする。

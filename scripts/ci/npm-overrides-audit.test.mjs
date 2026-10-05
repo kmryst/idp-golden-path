@@ -13,15 +13,16 @@ import {
   checkSync,
   evaluateStaleness,
   extractAdvisories,
+  evaluateOverrides,
   findIntroducedAdvisories,
-  inventoryOverrides,
   parseNonSecurityOverrides,
   parseOverridesRegistry,
   parseOverridesRemovalRequest,
   renderOverridesSummary,
+  renderRemovalSelectionSummary,
   runApplyRemoval,
   selectRemovable,
-  verifyRemovalSet,
+  selectSingleRemoval,
 } from "./npm-overrides-audit.mjs";
 
 const GHSA = "GHSA-7w5x-hrqm-74c2";
@@ -539,6 +540,14 @@ test("authorizes only patterns registered in the security registry", () => {
   assert.throws(
     () => authorizeOverridesRemoval({ patterns: ["@types/node"] }, registry),
     /not registered in npm-overrides.json/,
+  );  // 撤去 PR 1 本で外すのは 1 件だけ。artifact が複数を指していたら拒否する
+  assert.throws(
+    () =>
+      authorizeOverridesRemoval(
+        { patterns: ["smol-toml", "ms"] },
+        [registryEntry(), registryEntry({ pattern: "ms" })],
+      ),
+    /exactly one override/,
   );
 });
 
@@ -656,125 +665,174 @@ test("apply-removal rejects an artifact with another file or an unregistered pat
 // ---------------------------------------------------------------------------
 // overrides どうしの相互作用（#315 のレビュー指摘の再現）
 //
-// npm の依存解決を「どの overrides が残っているか」から advisory を返す関数で模擬する。
-// A_GHSA: override A を外すと再出現する advisory
-// B_GHSA: override B が防いでいる Moderate の advisory。ただし B の対象パッケージは
-//         override A が効いているときだけ依存グラフに入る
+// npm の依存解決を「どの overrides を外したか」から advisory を返す関数で模擬する。
+// 撤去 PR 1 本で外す override は 1 件に限り、その 1 件だけを外した（他は残した）状態で検証する。
+// 計測関数は撤去前の baseline も返す。ここでは baseline の advisory は無いものとする
 // ---------------------------------------------------------------------------
 
 const A_GHSA = "GHSA-aaaa-aaaa-aaaa";
 const B_GHSA = "GHSA-bbbb-bbbb-bbbb";
+const C_GHSA = "GHSA-cccc-cccc-cccc";
 
-function interactingRegistry() {
-  return [
-    registryEntry({ pattern: "pkg-a", advisories: [A_GHSA], directories: [ROOT] }),
-    registryEntry({ pattern: "pkg-b", advisories: [B_GHSA], directories: [ROOT] }),
-  ];
+function entriesFor(patterns, directories = [ROOT]) {
+  const ghsa = { "pkg-a": A_GHSA, "pkg-b": B_GHSA, "pkg-c": C_GHSA };
+  return patterns.map((pattern) =>
+    registryEntry({ pattern, advisories: [ghsa[pattern]], directories }),
+  );
 }
 
-// removed: 外した pattern の集合 → その状態での advisory
-function modelAdvisories(removed) {
-  const advisories = [];
-  if (removed.has("pkg-a")) {
-    advisories.push(advisory({ package: "pkg-a", ghsa: A_GHSA, severity: "high" }));
-  }
-  // pkg-b は override A が残っているときだけグラフに入り、B を外すと Moderate が出る
-  if (!removed.has("pkg-a") && removed.has("pkg-b")) {
-    advisories.push(advisory({ package: "pkg-b", ghsa: B_GHSA, severity: "moderate" }));
-  }
-  return advisories;
+// model(removed: Set<pattern>, directory) → advisories
+function modelMeasurer(model, { lockfileChanged = () => false } = {}) {
+  const calls = [];
+  const measure = (directory, entries) => {
+    const removed = new Set(entries.map((entry) => entry.pattern));
+    calls.push([directory, [...removed]]);
+    return {
+      baseline: [],
+      advisories: model(removed, directory),
+      lockfileChanged: lockfileChanged(removed, directory),
+    };
+  };
+  return { measure, calls };
 }
-
-const measureFromModel = (model) => (_directory, entries) =>
-  model(new Set(entries.map((entry) => entry.pattern)));
 
 test("REGRESSION: removing every override at once misjudges an override that is still needed", () => {
-  const registry = interactingRegistry();
-  // 修正前の判定（全部を一度に外す）: B の advisory は再出現しないので B が stale に見える
+  // pkg-b の対象パッケージは override A が効いているときだけ依存グラフに入り、B を外すと Moderate が出る
+  const model = (removed) => [
+    ...(removed.has("pkg-a")
+      ? [advisory({ package: "pkg-a", ghsa: A_GHSA, severity: "high" })]
+      : []),
+    ...(!removed.has("pkg-a") && removed.has("pkg-b")
+      ? [advisory({ package: "pkg-b", ghsa: B_GHSA, severity: "moderate" })]
+      : []),
+  ];
+  const registry = entriesFor(["pkg-a", "pkg-b"]);
+
+  // 全部を一度に外すと B の advisory は再出現しないので B が stale に見える（修正前の誤り）
   const allAtOnce = evaluateStaleness(registry, {
-    [ROOT]: modelAdvisories(new Set(["pkg-a", "pkg-b"])),
+    [ROOT]: model(new Set(["pkg-a", "pkg-b"])),
   });
   assert.deepEqual(
     allAtOnce.stale.map((entry) => entry.pattern),
     ["pkg-b"],
   );
 
-  // 修正後: B だけを外し A を残した状態で測るので、B はまだ必要
-  const result = inventoryOverrides(registry, measureFromModel(modelAdvisories));
-  assert.deepEqual(result.stale, []);
-  assert.deepEqual(
-    result.needed.map((entry) => entry.pattern),
-    ["pkg-a", "pkg-b"],
-  );
+  // 1 件ずつ外して測ると、A も B もまだ必要
+  const evaluation = evaluateOverrides(registry, modelMeasurer(model).measure);
+  assert.deepEqual(evaluation.result.stale, []);
+  assert.equal(selectSingleRemoval(registry, evaluation).candidate, null);
 });
 
-test("an override that is removable on its own but not together with another is deferred", () => {
-  const registry = interactingRegistry();
-  // A も B も単独では外せる。両方を外すと B の Moderate が再出現する
+test("REGRESSION: only one override is removed even when removing several together would conflict", () => {
+  // 2 回目のレビューの指摘 1・3: A・B・C はそれぞれ単独なら外せるが、まとめて外すと GHSA が出る。
+  // 集合を扱わず、単独で検証済みの 1 件（台帳順の先頭）だけを撤去要求にする
   const model = (removed) =>
-    removed.has("pkg-a") && removed.has("pkg-b")
-      ? [advisory({ package: "pkg-b", ghsa: B_GHSA, severity: "moderate" })]
+    removed.size > 1
+      ? [
+          advisory({ package: "pkg-a", ghsa: A_GHSA, severity: "moderate" }),
+          advisory({ package: "pkg-b", ghsa: B_GHSA, severity: "moderate" }),
+        ]
       : [];
-  const inventory = inventoryOverrides(registry, measureFromModel(model));
-  assert.deepEqual(
-    inventory.stale.map((entry) => entry.pattern),
-    ["pkg-a", "pkg-b"],
-  );
+  const registry = entriesFor(["pkg-a", "pkg-b", "pkg-c"], [ROOT, SKELETON]);
+  const { measure, calls } = modelMeasurer(model);
+  const evaluation = evaluateOverrides(registry, measure);
+  const selection = selectSingleRemoval(registry, evaluation);
 
-  const calls = [];
-  const verified = verifyRemovalSet(registry, (directory, entries) => {
-    calls.push(entries.map((entry) => entry.pattern));
-    return {
-      baseline: [],
-      advisories: model(new Set(entries.map((entry) => entry.pattern))),
-      lockfileChanged: false,
-    };
-  });
+  assert.equal(selection.candidate.pattern, "pkg-a");
   assert.deepEqual(
-    verified.removable.map((entry) => entry.pattern),
-    ["pkg-a"],
+    selection.waiting.map((entry) => entry.pattern),
+    ["pkg-b", "pkg-c"],
   );
-  assert.deepEqual(
-    verified.deferred.map((entry) => entry.pattern),
-    ["pkg-b"],
-  );
-  // 候補を減らしたら、残りの集合で測り直している
-  assert.deepEqual(calls, [["pkg-a", "pkg-b"], ["pkg-a"]]);
+  // 計測はすべて 1 件だけを外した状態で行っている（複数をまとめて外す計測が無い）
+  assert.ok(calls.every(([, removed]) => removed.length === 1));
+  assert.equal(calls.length, 6);
 });
 
-test("the removal set is rejected when a recorded advisory of any severity reappears", () => {
-  const entry = registryEntry({ advisories: [B_GHSA], directories: [ROOT] });
-  const verified = verifyRemovalSet([entry], () => ({
-    baseline: [],
-    advisories: [advisory({ ghsa: B_GHSA, severity: "low" })],
-    lockfileChanged: true,
-  }));
-  assert.deepEqual(verified.removable, []);
-  assert.deepEqual(verified.deferred, [entry]);
-  assert.equal(verified.lockfileChanges, false);
-});
-
-test("the removal set fails closed when it introduces an unrecorded High advisory", () => {
-  const entry = registryEntry({ directories: [ROOT] });
+test("REGRESSION: a removable override that introduces an unrecorded High advisory fails closed", () => {
+  // 2 回目のレビューの指摘 2: 台帳 GHSA の再出現と未記録の Critical が同時に出ても、緑で終わらない。
+  // pkg-a は外すと自分の GHSA が出る（まだ必要）。pkg-b は自分の GHSA は出ないが、外すと未記録の Critical が出る
+  const model = (removed) => [
+    ...(removed.has("pkg-a")
+      ? [advisory({ package: "pkg-a", ghsa: A_GHSA, severity: "moderate" })]
+      : []),
+    ...(removed.has("pkg-b")
+      ? [advisory({ package: "ms", ghsa: OTHER_GHSA, severity: "critical" })]
+      : []),
+  ];
+  const registry = entriesFor(["pkg-a", "pkg-b"]);
+  const evaluation = evaluateOverrides(registry, modelMeasurer(model).measure);
   assert.throws(
-    () =>
-      verifyRemovalSet([entry], () => ({
-        baseline: [],
-        advisories: [advisory({ package: "ms", ghsa: OTHER_GHSA, severity: "high" })],
-        lockfileChanged: false,
-      })),
-    /introduces High \/ Critical advisories/,
+    () => selectSingleRemoval(registry, evaluation),
+    /removing pkg-b in \. introduces High \/ Critical advisories/,
   );
 });
 
-test("the removal set is measured in every declared directory and reports lockfile changes", () => {
-  const entry = registryEntry();
-  const measured = [];
-  const verified = verifyRemovalSet([entry], (directory) => {
-    measured.push(directory);
-    return { baseline: [], advisories: [], lockfileChanged: directory === SKELETON };
+test("a removable override is checked for introduced High advisories even when it is not first", () => {
+  const model = (removed) =>
+    removed.has("pkg-b")
+      ? [advisory({ package: "ms", ghsa: OTHER_GHSA, severity: "high" })]
+      : [];
+  const registry = entriesFor(["pkg-a", "pkg-b"]);
+  const evaluation = evaluateOverrides(registry, modelMeasurer(model).measure);
+  assert.throws(() => selectSingleRemoval(registry, evaluation), /introduces High/);
+});
+
+test("High advisories that already exist before the removal do not count as introduced", () => {
+  const existing = advisory({ package: "braces", ghsa: OTHER_GHSA, severity: "high" });
+  const registry = entriesFor(["pkg-a"]);
+  const evaluation = evaluateOverrides(registry, () => ({
+    baseline: [existing],
+    advisories: [existing],
+    lockfileChanged: false,
+  }));
+  assert.equal(selectSingleRemoval(registry, evaluation).candidate.pattern, "pkg-a");
+});
+
+test("the recorded advisory of the candidate is matched regardless of severity", () => {
+  const model = (removed) =>
+    removed.has("pkg-a")
+      ? [advisory({ package: "pkg-a", ghsa: A_GHSA, severity: "low" })]
+      : [];
+  const registry = entriesFor(["pkg-a"]);
+  const evaluation = evaluateOverrides(registry, modelMeasurer(model).measure);
+  assert.equal(selectSingleRemoval(registry, evaluation).candidate, null);
+});
+
+test("lockfile changes are taken from the selected candidate in every directory", () => {
+  const registry = entriesFor(["pkg-a", "pkg-b"], [ROOT, SKELETON]);
+  const evaluation = evaluateOverrides(
+    registry,
+    modelMeasurer(() => [], {
+      lockfileChanged: (removed, directory) =>
+        removed.has("pkg-a") && directory === SKELETON,
+    }).measure,
+  );
+  const selection = selectSingleRemoval(registry, evaluation);
+  assert.equal(selection.candidate.pattern, "pkg-a");
+  assert.equal(selection.lockfileChanges, true);
+});
+
+test("partial staleness blocks the removal and is reported", () => {
+  const model = (removed, directory) =>
+    removed.has("pkg-a") && directory === ROOT
+      ? [advisory({ package: "pkg-a", ghsa: A_GHSA })]
+      : [];
+  const registry = entriesFor(["pkg-a", "pkg-b"], [ROOT, SKELETON]);
+  const evaluation = evaluateOverrides(registry, modelMeasurer(model).measure);
+  const selection = selectSingleRemoval(registry, evaluation);
+  assert.equal(selection.candidate, null);
+  assert.deepEqual(selection.partial, [
+    { pattern: "pkg-a", staleIn: [SKELETON], neededIn: [ROOT] },
+  ]);
+});
+
+test("the removal summary names the single candidate and the waiting ones", () => {
+  const summary = renderRemovalSelectionSummary({
+    candidate: registryEntry({ pattern: "pkg-a" }),
+    waiting: [registryEntry({ pattern: "pkg-b" })],
+    lockfileChanges: false,
+    partial: [],
   });
-  assert.deepEqual(measured, [ROOT, SKELETON]);
-  assert.deepEqual(verified.removable, [entry]);
-  assert.equal(verified.lockfileChanges, true);
+  assert.match(summary, /Removed in this run: pkg-a/);
+  assert.match(summary, /Waiting \(one override per removal pull request\): pkg-b/);
 });
