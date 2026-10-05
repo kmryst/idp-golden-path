@@ -72,15 +72,6 @@ updates:
         patterns:
           - "*"
     ignore:
-      # jsdom 30 は CSS.escape の IDL brand check 厳格化により、
-      # MUI v4 (@material-ui/styles + JSS) 経由で App.test.tsx が TypeError で落ちる（PR #132 で検出）。
-      # 実測: jsdom のみ 29.1.1 に戻すと yarn test / yarn tsc とも pass（他5件は更新したまま）。
-      # 本番影響なし: jsdom は devDependency でテスト環境専用。
-      # 解除条件: @backstage/core-components の依存が @material-ui/core → @mui/material に変わったら。
-      # 見直し期限: 2026-11-02（Issue #134 の audit 例外と棚卸し時期を揃える）
-      # 追跡: Issue #146
-      - dependency-name: "jsdom"
-        update-types: ["version-update:semver-major"]
       # typescript 7 は、本リポジトリの Yarn 4.13.0 では lockfile 更新の時点で失敗する。
       # 組み込みパッチ compat/typescript が TS7 に無い lib/_tsc.js を探して ENOENT になる
       # （peer 範囲違反ではない。上流修正は yarnpkg/berry#7190、Yarn 4.17.1）。
@@ -106,7 +97,7 @@ updates:
   # /backstage に directories で相乗りさせない理由:
   #   - open-pull-requests-limit がディレクトリ間で共有され、@backstage/* の
   #     大量更新に skeleton の PR 枠が食われる
-  #   - react / backstage グループと jsdom の ignore は skeleton には無関係で、
+  #   - react / backstage グループは skeleton には無関係で、
   #     読み手に「skeleton にも効いている」と誤読させる
   # エントリが無い間も security update だけは Dependabot が出すため
   # （PR #201 = fast-uri が実例）、「alert は来るのに通常更新は来ない」という
