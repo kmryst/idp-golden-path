@@ -7,5 +7,13 @@
     "steps": ["yarn up jsdom@30", "yarn tsc", "CI=1 yarn test"],
     "review-by": "2026-11-02",
     "tracking": "https://github.com/kmryst/idp-golden-path/issues/146"
+  },
+  {
+    "directory": "/backstage",
+    "dependency-name": "typescript",
+    "probe": false,
+    "probe-skip-reason": "backstage/ の Yarn 4.13.0 は typescript@7 の lockfile 更新で必ず失敗する（compat/typescript パッチの ENOENT、berry#7190 で 4.17.1 修正）。上流の typescript-eslint が対応しても probe は永久に失敗し解除を検知できない。Yarn を 4.17.1 以上に上げたら spec typescript@7 / steps yarn up typescript@7, yarn lint:all の probe: true へ切り替える",
+    "review-by": "2026-11-02",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/305"
   }
 ]
