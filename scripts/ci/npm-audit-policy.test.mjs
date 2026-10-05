@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   AuditPolicyError,
@@ -13,6 +16,16 @@ import {
 } from "./npm-audit-policy.mjs";
 
 const NOW = new Date("2026-07-28T12:00:00.000Z");
+// ルートの package-lock.json に対する実際の `npm audit --json` 出力（2026-10-05、Issue #300）。
+// braces の 1 advisory が micromatch → fast-glob / globby → markdownlint-cli2 へ via 連鎖で波及し、
+// globby は fast-glob と micromatch の両方を経由する（菱形の依存）
+const BRACES_VIA_CHAIN_FIXTURE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  "npm-audit",
+  "braces-via-chain.json",
+);
+const BRACES_GHSA = "GHSA-vfj7-8cjw-p6xm";
 const GHSA = "GHSA-mh99-v99m-4gvg";
 const OTHER_GHSA = "GHSA-2222-3333-4444";
 
@@ -234,6 +247,40 @@ test("allows one exact GHSA across via parents and multiple installed nodes", ()
   ]);
   assert.deepEqual(result.blocked, []);
   assert.deepEqual(result.unused, []);
+});
+
+test("allows a real npm audit report whose High entries all trace back to one excepted GHSA", () => {
+  const realReport = parseAuditJson(
+    readFileSync(BRACES_VIA_CHAIN_FIXTURE, "utf8"),
+  );
+  const exceptions = [
+    activeException({
+      id: BRACES_GHSA,
+      tracking: "https://github.com/kmryst/idp-golden-path/issues/297",
+    }),
+  ];
+
+  const allowedResult = evaluateAuditReport(realReport, exceptions);
+  assert.equal(allowedResult.pass, true);
+  assert.equal(allowedResult.allowed.length, 1);
+  assert.equal(allowedResult.allowed[0].id, BRACES_GHSA);
+  assert.deepEqual(allowedResult.allowed[0].packages, [
+    "braces",
+    "fast-glob",
+    "globby",
+    "markdownlint-cli2",
+    "micromatch",
+  ]);
+  assert.deepEqual(allowedResult.blocked, []);
+  assert.deepEqual(allowedResult.unused, []);
+
+  // 依存パッケージ名ではなく根本 advisory の GHSA で照合しているため、
+  // 例外が無ければ同じ 5 パッケージがまとめて 1 件の High として止まる
+  const blockedResult = evaluateAuditReport(realReport, []);
+  assert.equal(blockedResult.pass, false);
+  assert.equal(blockedResult.blocked.length, 1);
+  assert.equal(blockedResult.blocked[0].id, BRACES_GHSA);
+  assert.equal(blockedResult.blocked[0].packages.length, 5);
 });
 
 test("blocks another High advisory mixed with the allowed GHSA", () => {

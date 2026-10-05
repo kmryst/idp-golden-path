@@ -12,7 +12,8 @@
 # caller 側で working-directory を変えて複数回呼び出すこと（Issue #110）
 # 期限付き例外（GHSA + expires + tracking Issue）は npm 消費側が `npm-audit-exceptions`、
 # yarn 消費側が `yarn-audit-exceptions` input で宣言する。本リポジトリ自身の yarn 例外は
-# scripts/ci/yarn-audit-exceptions.json で宣言する（正本: docs/operations/security-scanning.md、Issue #133）
+# scripts/ci/yarn-audit-exceptions.json、ルート / skeleton の npm 例外は scripts/ci/npm-audit-exceptions.json で
+# 宣言する（正本: docs/operations/security-scanning.md、Issue #133 / #300）
 
 name: Dependency Audit
 
@@ -346,7 +347,8 @@ jobs:
   # 1 ディレクトリずつ独立させているのは、同一 job の step にすると step の暗黙の success() で
   # 「ルートが落ちている間は skeleton が skip される」従属関係が生まれるため（Issue #255 / #257）。
   # 同じ理由で dependency-audit job への needs: も付けない。
-  # 閾値は backstage/（Yarn）と同じく high 以上で fail（正本: docs/operations/security-scanning.md）
+  # 閾値は backstage/（Yarn）と同じく high 以上で fail（正本: docs/operations/security-scanning.md）。
+  # 期限付き例外は scripts/ci/npm-audit-exceptions.json で宣言する（Issue #300）
   npm-dependency-audit:
     name: npm Dependency Audit (${{ matrix.target.label }})
     if: >-
@@ -393,7 +395,31 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # 期限付き例外（GHSA + expires + tracking Issue）を scripts/ci/npm-audit-exceptions.json から読む。
+      # ルートと skeleton で 1 ファイルを共有する（同じ devDependencies を持ち、例外は GHSA 単位のため。
+      # 片方でだけ検出されなくなった例外は、その job の Job Summary に stale として出る）。
+      # yarn 側（scripts/ci/yarn-audit-exceptions.json）と同じく、空配列なら従来どおりの素のゲートを実行する。
+      # JSON として読めないファイルは jq が失敗し、この step で fail closed になる
+      - name: Resolve npm audit exceptions
+        id: npm-exceptions
+        working-directory: ${{ github.workspace }}
+        run: |
+          exceptions="$(jq -c . scripts/ci/npm-audit-exceptions.json)"
+
+          active=false
+          if [[ "$exceptions" != "[]" ]]; then
+            active=true
+          fi
+
+          {
+            echo "active=$active"
+            echo "exceptions<<IDP_GOLDEN_PATH_EOF"
+            echo "$exceptions"
+            echo "IDP_GOLDEN_PATH_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Audit gate (fail on high or critical)
+        if: ${{ steps.npm-exceptions.outputs.active != 'true' }}
         run: >-
           npm audit
           --package-lock=true
@@ -403,6 +429,15 @@ jobs:
           --include=optional
           --include=peer
           --audit-level=high
+
+      # reusable workflow の npm-audit-exceptions input と同じ評価器を使う。
+      # runtime 依存（dev を omit）の素のゲートを先に通し、full audit では via 連鎖の根本 advisory が
+      # 期限内の例外 GHSA だけである High を一時許可する（Critical・期限切れ・書式不正は fail closed）
+      - name: Audit gate with expiring advisory exceptions
+        if: ${{ steps.npm-exceptions.outputs.active == 'true' }}
+        env:
+          NPM_AUDIT_EXCEPTIONS: ${{ steps.npm-exceptions.outputs.exceptions }}
+        run: node "$GITHUB_WORKSPACE/scripts/ci/npm-audit-policy.mjs"
 
   # セキュリティ起因 resolutions の台帳（scripts/ci/yarn-resolutions.json）と
   # backstage/package.json の同期検証。本リポジトリ固有のチェックであり消費側では実行しない。
