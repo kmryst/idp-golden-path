@@ -59,17 +59,39 @@ PR #314 の内容:
 | `npm Overrides Removal PR` | skipped（`needs` の暗黙の `success()`） |
 | 撤去 PR | #314 は更新されていない（`updatedAt` が run の前後で同じ） |
 
+## 再検証: 撤去 PR 1 本で外すのを 1 件に限る方式（`aceb9c0`）
+
+上のケース 1〜3 は最初の実装（`a0dce84`。全部の overrides を一度に外して判定）で実走させたもの。
+PR #315 のレビューで判定方式の穴が指摘され、「各 override をそれだけを外して判定し、撤去 PR 1 本で外すのは
+単独で検証済みの 1 件（台帳順の先頭）に限る」方式に変えた（`aceb9c0`）ため、次の 3 ケースを実走させ直した。
+Draft 化の経路（ケース 2）は PR 作成 job 側の変更が無いため再実走していない。
+
+検証ブランチ `310-verify-npm-single-removal`（検証後に削除）で、ルートと skeleton の両方に no-op の override を 2 件
+（`argparse: 2.0.1` と `uc.micro: 3.0.0`。どちらもロック済みの版と同じ右辺）足し、存在しない GHSA で台帳に登録した（commit `d91ab65`）。
+どちらも単独で外せる状態である。
+
+| ケース | run | 結果 |
+| --- | --- | --- |
+| 2 件とも外せる → 撤去 PR は 1 件だけ | [37297552891](https://github.com/kmryst/idp-golden-path/actions/runs/37297552891) | `npm Overrides Inventory` 緑。Job Summary に `Removed in this run: argparse` / `Waiting (one override per removal pull request): uc.micro`。`npm Overrides Removal PR` が PR #316 を作成し、差分は `argparse` の行（ルート / skeleton の `package.json`）と台帳の `argparse` エントリだけで、`uc.micro` は残った。Draft ではない（`lockfile changes: false`） |
+| 再実行 | [37297730880](https://github.com/kmryst/idp-golden-path/actions/runs/37297730880) | 緑、`pull-request-operation = none`。open の撤去 PR は #316 の 1 本のまま |
+| 機構の故障（到達できない registry、commit `ebdd433`） | [37297830421](https://github.com/kmryst/idp-golden-path/actions/runs/37297830421) | `npm Overrides Inventory` 赤（`npm audit returned an error`）。`npm Overrides Removal PR` は skipped で、#316 は更新されていない（`updatedAt` が run の前後で同じ） |
+
+PR #316 は close し、`dependency-bot/npm-overrides-removal` ブランチと検証ブランチを削除した。
+
 ## ユニットテストで確認したこと
 
-`node --test scripts/ci/npm-overrides-audit.test.mjs`（57 件 pass）で、次を確認している。
+`node --test scripts/ci/npm-overrides-audit.test.mjs`（66 件 pass）で、次を確認している。
 
 - 全ての適用先で stale のエントリだけを撤去対象にし、一部の適用先でだけ stale のエントリは partial として赤にすること
+- #315 のレビュー指摘の再現: 全部を一度に外すと、まだ必要な override が stale に見えること（1 件ずつ外す判定では needed になる）、
+  まとめて外すと競合する候補があっても単独で検証済みの 1 件だけが選ばれること、解除可能な override を外すと未記録の
+  High / Critical が出る場合に赤になること、台帳記載の advisory が Low でも再出現すれば外さないこと
 - `removal.json` の改ざん（余分なキー、パッケージ名以外の pattern、重複、型の違い）と、artifact に `removal.json` 以外のファイルがある場合、台帳に無い pattern を指す場合の拒否（作業ツリーを書き換えないこと）
 - 撤去で `overrides` が空になったらキーごと消えること、PR 本文と Draft の要否が `lockfileChanges` に従うこと
 - 撤去後に「外す前に無かった High / Critical」だけを新規として数えること（既存の例外付き advisory は数えない）
 
 ## 後片付け
 
-- PR #314 を close し、`dependency-bot/npm-overrides-removal` ブランチを削除した
-- 検証ブランチ `310-verify-npm-overrides-removal-pr` を削除した
+- PR #314 / #316 を close し、`dependency-bot/npm-overrides-removal` ブランチを削除した
+- 検証ブランチ `310-verify-npm-overrides-removal-pr` / `310-verify-npm-single-removal` を削除した
 - 検証用の Issue は作っていない（npm overrides の台帳は追跡 Issue を持たない）
