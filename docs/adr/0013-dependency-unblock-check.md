@@ -180,6 +180,17 @@ artifact の受け渡しでジョブ構造が複雑になる割に得られる�
   caller 追加時は `docs/operations/dependency-unblock-check.md` の導入手順に従う
 - 本 workflow を含むリリースタグ（`v1.x.y` / `v1`）の付け替えは ADR-0008 の手順に従う
 
+## 追記（2026-10-05）: 本リポジトリ自身の `UNBLOCKED` は撤去 PR の自動作成で知らせる
+
+[ADR-0016](./0016-automated-removal-pr-for-dependency-workarounds.md)（Issue #310）で、本リポジトリ自身の実行に限り、
+`UNBLOCKED` を「赤（exit 10）+ 追跡 Issue へのコメント」から「緑（exit 0）+ GitHub App による ignore の撤去 PR」に変えた。
+変わるのは選択肢 3（朗報の色）・選択肢 4（通知経路）・選択肢 8 のうち job を分けない判断の 3 点で、本リポジトリ自身の実行にだけ適用する。
+
+- probe（台帳の `steps` を実行する job）と撤去 PR 作成（App のトークンを持つ job）を分ける。撤去 PR には Contents: write が要り、
+  選択肢 8 の「`issues: write` 程度なら分けない」という前提が成り立たないため
+- 消費側（`workflow_call`）は従来どおり exit 10 + コメントで、本 ADR の決定は変わらない
+- probe・台帳・機構検査 1〜5・PR トリガーを張らないセキュリティ制約は変えない。撤去 PR 作成 job も台帳の `steps` を実行しない
+
 ## 関連
 
 - [ADR-0008](./0008-ci-guardrails-as-reusable-workflows-with-tag-pinning.md) — reusable workflow の dual-trigger 提供とタグ固定
@@ -189,3 +200,4 @@ artifact の受け渡しでジョブ構造が複雑になる割に得られる�
 - Issue #160 — 本 workflow の新設
 - Issue #146 — jsdom major 更新 ignore の追跡 Issue（本リポジトリ唯一の台帳エントリ）
 - Issue #106 — caller / callee の concurrency group デッドロック契約
+- [ADR-0016](./0016-automated-removal-pr-for-dependency-workarounds.md) — 本リポジトリ自身の `UNBLOCKED` を撤去 PR の自動作成に変更（追記 2026-10-05）

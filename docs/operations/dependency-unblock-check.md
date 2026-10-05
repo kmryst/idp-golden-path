@@ -4,6 +4,8 @@ Dependabot の `ignore` が「もう外せる」状態になっていないか�
 `dependabot.yml` の ignore・サイドカー台帳・追跡 Issue の三者の食い違いを検出する仕組みの運用正本です。
 
 設計判断の背景は [ADR-0013](../adr/0013-dependency-unblock-check.md) を参照してください。
+本リポジトリ自身の実行で `UNBLOCKED` を撤去 PR の自動作成に寄せた判断は
+[ADR-0016](../adr/0016-automated-removal-pr-for-dependency-workarounds.md) です。
 脆弱性スキャン（`npm audit` / `yarn audit` / 期限付き例外）の正本は
 [security-scanning.md](./security-scanning.md) です。用途が別なので混ぜません。
 
@@ -12,7 +14,8 @@ Dependabot の `ignore` が「もう外せる」状態になっていないか�
 | ファイル | 役割 |
 | --- | --- |
 | `.github/workflows/dependency-unblock-check.yml` | 週次 schedule + `workflow_dispatch` + `workflow_call` の reusable workflow |
-| `scripts/ci/dependabot-unblock-check.mjs` | 評価器（外部依存ゼロ）。`sync` / `full` のサブコマンドを持つ |
+| `scripts/ci/dependabot-unblock-check.mjs` | 評価器（外部依存ゼロ）。`sync` / `full` / `apply-removal` のサブコマンドを持つ |
+| `scripts/ci/removal-request.mjs` | 撤去 PR の自動作成で job 間を渡る artifact（`removal.json`）の検査と読み込み。`yarn-resolutions-audit.mjs` と共通 |
 | `scripts/ci/dependabot-unblock-check.test.mjs` | `node --test` による単体テスト |
 | `scripts/ci/dependabot-unblock.json` | 台帳（本リポジトリ分） |
 | `scripts/ci/fixtures/dependabot/*.yml` | 3 リポジトリの `dependabot.yml` 実ファイルのコピー（抽出器のテスト用） |
@@ -25,7 +28,7 @@ Dependabot の `ignore` が「もう外せる」状態になっていないか�
 | 偽リポジトリ | 中身 | 再現する状態 |
 | --- | --- | --- |
 | `fixtures/repo/blocked/` | probe が必ず失敗するエントリ 1 件（`steps` の末尾が `exit 1`） | 緑 `OK: still blocked`（exit 0） |
-| `fixtures/repo/unblocked/` | 必ず失敗するエントリ + 必ず成功するエントリ（`exit 0`）各 1 件 | `UNBLOCKED`（exit 10） |
+| `fixtures/repo/unblocked/` | 必ず失敗するエントリ + 必ず成功するエントリ（`exit 0`）各 1 件 | `UNBLOCKED`（exit 10、撤去 PR を作る設定では exit 0 + `removal.json`）。`apply-removal` のテストは、このリポジトリを一時ディレクトリへ複製して書き換える |
 
 実パッケージのインストールもネットワークアクセスもなしに両方の分岐を踏めます。
 追跡 Issue 番号（#9001 / #9002）は架空で、テストは偽 GitHub クライアントを使います。
@@ -44,17 +47,22 @@ ignore を足す / 外すときは両方を同一 PR で更新すれば通りま
 | Job Summary 先頭行 | exit | 意味 | やること |
 | --- | --- | --- | --- |
 | `OK: still blocked（probe N 件、全て想定どおり失敗）` | 0（緑） | 上流はまだ追いついていない。機構も健全 | なし |
-| `UNBLOCKED: <name>@<解決版> が通りました — ignore を外せます（#NNN）` | 10（赤） | **朗報**。上流が対応し、実際にビルド / テストが通った | ignore 解除 PR を出す（下記） |
+| `UNBLOCKED: <name>@<解決版> が通りました — ignore の撤去 PR を作成します（#NNN）` | 0（緑） | **本リポジトリ自身の実行**。上流が対応し、実際にビルド / テストが通った | 自動で作られる撤去 PR をレビューする（下記） |
+| `UNBLOCKED: <name>@<解決版> が通りました — ignore を外せます（#NNN）` | 10（赤） | **消費側（`workflow_call`）の実行**。同上 | ignore 解除 PR を出す（下記） |
 | `MECHANISM: <詳細>` | 1（赤） | 機構の故障。ignore / 台帳 / Issue / ラベルのどれかが食い違っている | 下の対処表を参照 |
 
 複数の事象が同時に起きた場合は `MECHANISM` を優先して表示します。
 機構が壊れている間は probe の結果自体が信用できないため、probe は実行しません。
 
-朗報を赤にしているのは、新しい通知インフラを足さずに人へ確実に届く唯一の経路が
+消費側で朗報を赤にしているのは、新しい通知インフラを足さずに人へ確実に届く唯一の経路が
 GitHub Actions の失敗通知だからです。上流対応は数か月に一度なので、この赤は稀です。
 
+本リポジトリ自身の実行では、赤と追跡 Issue へのコメントの代わりに、GitHub App `kmryst-dependency-bot` が
+**ignore の撤去 PR** を作ります（Issue #310、ADR-0016）。Issue コメントは見落とされた実例があり（#146）、
+撤去 PR は PR 一覧に残り続けるためです。消費側は App をインストールしていないため、従来どおりです。
+
 **上流を待っているあいだ、人間がすることはありません。** 週次ジョブが見張っていて、
-解除できるようになったら赤（`UNBLOCKED`）で知らせます。定期的に手で上流を確認する運用は不要です。
+解除できるようになったら撤去 PR（消費側では赤の `UNBLOCKED`）で知らせます。定期的に手で上流を確認する運用は不要です。
 唯一の例外が `review-by` の見直し期限で、そこまでに解除できなければ検査5 が赤になり、CI が棚卸しを強制します。
 
 ## 赤（MECHANISM）の理由と対処
@@ -382,7 +390,36 @@ unzip -p log.zip 0_Dependabot.txt | grep -o '"ignore-conditions":\[[^]]*\]'
 1 で起票した追跡 Issue は、この PR では close しません。
 PR 本文では `Refs #NNN` を使い、`Closes` は使わないでください。
 
-## `UNBLOCKED`（赤 exit 10）が出たときの手順
+## 撤去 PR が作られたときの手順（本リポジトリ）
+
+`UNBLOCKED` の週は、`Dependency Unblock Check` の `Dependabot Ignore Removal PR` job が
+`dependency-bot/dependabot-ignore-removal` ブランチから撤去 PR
+（`chore(deps): 解除条件を満たした Dependabot ignore を撤去する`、`type:chore` / `area:ci-cd` / `risk:low` / `cost:none`）を作ります。
+
+| 項目 | 内容 |
+| --- | --- |
+| 差分 | `.github/dependabot.yml` の ignore（直前の 7 項目コメントを含む。`ignore:` の下が空になればキーごと）と、台帳の該当エントリの削除だけ |
+| 本文 | probe の run、解決版、実行した steps、`Closes #<追跡 Issue>`、`Refs #310` |
+| Draft | しない（lockfile に影響しないため） |
+| 再実行 | 同じブランチが更新され、PR は重複しない |
+
+job は 2 つに分かれています。probe（台帳の `steps` を実行する job）は App のトークンを持たず、
+撤去する ignore の識別子（`directory` / `dependency-name`）と解決版だけを artifact の `removal.json` に書きます。
+PR 作成 job は `steps` を実行せず、`removal.json` を信頼できる checkout の台帳（`probe: true`）と `dependabot.yml` で照合し、
+差分と本文を自分で生成します。照合に失敗した場合や、差分が上記 2 ファイル以外に及ぶ場合は赤になり、PR は作られません。
+撤去後の作業ツリーで `sync` が exit 0 になることも、PR 作成前に確かめています。
+
+対応:
+
+1. 撤去 PR の本文と、追跡 Issue の本文（解除条件と「ignore を外したあとに必要な作業」）を読む
+2. 解除条件のうち自リポジトリ側の作業（probe の `steps` の中だけで行っているもの）が main に入っているか確認する。
+   入っていなければ、マージ後に Dependabot が出す更新 PR に同じ作業を足す（例: #305 の `@typescript/typescript6` と `rollup-plugin-dts` 6.5.1 以上）
+3. 撤去 PR をマージする（`Closes` で追跡 Issue も close される）
+4. 次の Dependabot 実行で出る更新 PR の CI で、実際に依存を上げてビルド / テストが通ることを確認する
+
+撤去 PR が開いている間も、毎週の probe が通れば同じ PR が更新されるだけで、job は緑のままです。
+
+## `UNBLOCKED`（赤 exit 10）が出たときの手順（消費側）
 
 1. Job Summary の probe 表と、追跡 Issue に自動投稿された記録コメントを読む
 2. 該当の ignore を `.github/dependabot.yml` から削除する
@@ -402,6 +439,7 @@ GITHUB_REPOSITORY=kmryst/idp-golden-path \
   node scripts/ci/dependabot-unblock-check.mjs sync
 
 # 追跡 Issue の検査 + probe まで（GITHUB_TOKEN / GITHUB_REPOSITORY が必要）
+# IDP_UNBLOCK_REMOVAL_DIR を渡すと、UNBLOCKED のときにコメントせず removal.json を書く
 GITHUB_REPOSITORY=kmryst/idp-golden-path GITHUB_TOKEN="$(gh auth token)" \
   node scripts/ci/dependabot-unblock-check.mjs full
 

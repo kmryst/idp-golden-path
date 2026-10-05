@@ -82,7 +82,8 @@ updates:
       # 影響（上の実測からの推定）: ignore を外すと npm-dev グループの PR に TS7 が入り、その PR の lint:all / build:all が落ちる。
       # 本番影響なし: typescript は devDependency でビルド・型チェック・lint 専用。
       # 解除条件: @typescript-eslint/parser の peer が typescript 7 を含み（上流待ち。probe で検知）、
-      #   かつ build:all が TS7 で通る（rollup-plugin-dts 6.5 以上 + @typescript/typescript6。自リポジトリ側の作業）。
+      #   かつ build:all が TS7 で通る（rollup-plugin-dts 6.5.1 以上 + @typescript/typescript6。自リポジトリ側の作業）。
+      #   probe の steps はこの 2 つをまとめて確かめる（TS7 → rollup-plugin-dts → typescript6 → lint:all → build:all。Issue #310）。
       # 見直し期限: 2026-11-02（3 リポジトリの Dependabot ignore の棚卸し時期と揃える）
       # 追跡: Issue #305
       - dependency-name: "typescript"

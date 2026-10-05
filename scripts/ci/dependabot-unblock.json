@@ -4,7 +4,7 @@
     "dependency-name": "typescript",
     "probe": true,
     "spec": "typescript@7",
-    "steps": ["yarn up typescript@7", "yarn lint:all"],
+    "steps": ["yarn up typescript@7", "yarn up -R rollup-plugin-dts", "yarn add -D @typescript/typescript6@^6", "yarn lint:all", "yarn build:all"],
     "review-by": "2026-11-02",
     "tracking": "https://github.com/kmryst/idp-golden-path/issues/305"
   }

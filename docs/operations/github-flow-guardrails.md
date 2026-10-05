@@ -149,7 +149,9 @@ job を `Success` で終了させます。caller job や called workflow の job
 `issues: write` の内訳は次のとおりです。`sync-labels.yml` はラベル定義の正本 `.github/labels.yml` を
 GitHub へ同期します（ラベル API は Issues 権限の配下です）。`issue-template-check.yml` は必須ラベルの
 付与・削除と検査結果コメントの投稿・更新を行います。`dependency-unblock-check.yml` は追跡 Issue の
-state / label を読み、probe 成功時に「いつ解除可能になったか」を追跡 Issue へコメントで記録します
+state / label を読み、消費側（`workflow_call`）の実行では probe 成功時に「いつ解除可能になったか」を
+追跡 Issue へコメントで記録します。本リポジトリ自身の実行ではコメントせず、撤去 PR を GitHub App のトークンで
+作ります（`Dependabot Ignore Removal PR` job は `permissions: contents: read` のまま。Issue #310）
 （正本は [dependency-unblock-check.md](./dependency-unblock-check.md)）。
 
 `actions: read` について、upstream の starter workflow のコメントは
