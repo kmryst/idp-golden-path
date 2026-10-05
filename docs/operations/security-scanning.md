@@ -333,13 +333,12 @@ npm 側（ルートの `package.json` と `backstage/templates/service-baseline/
 yarn の `resolutions` と同じ目的の機構として `overrides` があります。追加基準は yarn 側と同一です
 （修正版が依存元の宣言 range と同一 major 内に存在し、再解決しても修正版が選ばれず、適用後の動作を実測確認できること）。
 
-現在の登録内容:
+現在の登録内容: なし（台帳 `scripts/ci/npm-overrides.json` は空配列 `[]`）。
+直近では `smol-toml: ^1.8.0`（[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2)、影響範囲 `<= 1.7.0`）を
+Issue #261 で追加し、`markdownlint-cli2@0.23.3` が `"smol-toml": "1.8.0"` と exact pin するようになったため
+`npm Overrides Inventory` の stale 判定に従って Issue #302 で撤去しました。
 
-| override | 対応 advisory | 追加理由 | 削除条件 |
-| --- | --- | --- | --- |
-| `smol-toml: ^1.8.0` | [GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2)（high） | `markdownlint-cli2@0.23.2` が `"smol-toml": "1.7.0"` と exact pin しており、`markdownlint-cli2@latest` も 0.23.2 で上げ先が無いため、依存更新では解消できない（Issue #261） | `markdownlint-cli2` が smol-toml 1.7.1 以降を要求するようになったら不要 |
-
-`overrides` の右辺は yarn 側と同じく修正版を下限とする range（`^1.8.0`）にします。
+`overrides` の右辺は yarn 側と同じく修正版を下限とする range（例: `^1.8.0`）にします。
 再現性の固定は lockfile の仕事であり、右辺を完全固定すると同系統の次の修正版を拾えません。
 キーはパッケージ名そのものです（yarn の `pkg@npm:<range>` のような range 付きキーは、
 npm では親セレクタの書式であり上書き対象の指定には使いません）。
