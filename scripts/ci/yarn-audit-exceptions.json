@@ -1,1 +1,22 @@
-[]
+[
+  {
+    "id": "GHSA-c475-qrg2-pj4r",
+    "expires": "2026-12-31",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/295"
+  },
+  {
+    "id": "GHSA-86w9-cpqp-85rv",
+    "expires": "2026-12-31",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/296"
+  },
+  {
+    "id": "GHSA-vfj7-8cjw-p6xm",
+    "expires": "2026-12-31",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/297"
+  },
+  {
+    "id": "GHSA-7mx3-vvmw-hjmv",
+    "expires": "2026-12-31",
+    "tracking": "https://github.com/kmryst/idp-golden-path/issues/317"
+  }
+]
