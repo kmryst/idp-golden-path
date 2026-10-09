@@ -24,7 +24,9 @@ import {
   checkReviewDeadlines,
   checkTrackingIssues,
   commentMarker,
+  createGitHubClient,
   decideVerdict,
+  describeUnexpectedError,
   extractIgnoreEntries,
   formatLedger,
   parseLedger,
@@ -766,6 +768,105 @@ test("does not repost when the same resolved version is already recorded", async
 });
 
 // ---------------------------------------------------------------------------
+// GitHub API クライアント（接続切断時の再試行、Issue #322）
+// ---------------------------------------------------------------------------
+
+// undici が閉じた keep-alive 接続を再利用したときと同じ形の例外（message は `fetch failed`、原因は cause）
+function fetchFailed(code, message = `${code} from the fake fetch`) {
+  return new TypeError("fetch failed", { cause: Object.assign(new Error(message), { code }) });
+}
+
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+// 呼び出しを記録し、responses を先頭から順に返す（Error なら throw する）偽 fetch
+function scriptedFetch(responses) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push([init.method ?? "GET", url]);
+    const next = responses.shift();
+    if (next instanceof Error) {
+      throw next;
+    }
+    return next;
+  };
+  return { calls, fetchImpl };
+}
+
+test("a GET is retried once when the keep-alive connection was closed", async () => {
+  for (const code of ["UND_ERR_SOCKET", "EPIPE", "ECONNRESET"]) {
+    const { calls, fetchImpl } = scriptedFetch([
+      fetchFailed(code),
+      jsonResponse({ number: 146, state: "open", labels: [{ name: "dependabot-ignore" }] }),
+    ]);
+    const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+    assert.deepEqual(await github.getIssue(146), {
+      number: 146,
+      state: "open",
+      labels: ["dependabot-ignore"],
+    });
+    assert.equal(calls.length, 2, code);
+  }
+});
+
+test("a GET that fails twice is not retried again", async () => {
+  const { calls, fetchImpl } = scriptedFetch([
+    fetchFailed("UND_ERR_SOCKET"),
+    fetchFailed("EPIPE"),
+    jsonResponse([]),
+  ]);
+  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+  await assert.rejects(github.listIssueCommentBodies(146), (error) => {
+    assert.ok(error instanceof TypeError);
+    assert.equal(error.cause.code, "EPIPE");
+    return true;
+  });
+  assert.equal(calls.length, 2);
+});
+
+test("a GET is not retried on other causes or on HTTP errors", async () => {
+  const dns = scriptedFetch([fetchFailed("ENOTFOUND"), jsonResponse([])]);
+  await assert.rejects(
+    createGitHubClient(REPOSITORY, "test-token", dns.fetchImpl).listLabeledOpenIssues(),
+    (error) => error instanceof TypeError && error.cause.code === "ENOTFOUND",
+  );
+  assert.equal(dns.calls.length, 1);
+
+  const http = scriptedFetch([jsonResponse({ message: "Bad Gateway" }, 502), jsonResponse([])]);
+  await assert.rejects(
+    createGitHubClient(REPOSITORY, "test-token", http.fetchImpl).listLabeledOpenIssues(),
+    (error) => error instanceof UnblockCheckError && /failed with 502/.test(error.message),
+  );
+  assert.equal(http.calls.length, 1);
+});
+
+test("a POST is never retried so that a comment cannot be posted twice", async () => {
+  const { calls, fetchImpl } = scriptedFetch([
+    fetchFailed("UND_ERR_SOCKET"),
+    jsonResponse({ id: 1 }, 201),
+  ]);
+  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+  await assert.rejects(
+    github.createIssueComment(146, "body"),
+    (error) => error instanceof TypeError && error.cause.code === "UND_ERR_SOCKET",
+  );
+  assert.deepEqual(calls.map(([method]) => method), ["POST"]);
+});
+
+test("an unexpected error is described with its cause code and message", () => {
+  assert.equal(
+    describeUnexpectedError(fetchFailed("EPIPE", "write EPIPE")),
+    "fetch failed (cause: EPIPE write EPIPE)",
+  );
+  assert.equal(describeUnexpectedError(new Error("boom")), "boom");
+  assert.equal(describeUnexpectedError("not an error"), "not an error");
+});
+
+// ---------------------------------------------------------------------------
 // runSync / runFull
 // ---------------------------------------------------------------------------
 
@@ -866,6 +967,57 @@ test("runFull exits 10 and comments before exiting when a probe succeeds", async
   assert.notEqual(commentIndex, -1);
   // exit する前に記録が残ることを、runFull の解決前にコメントが存在することで確認する
   assert.equal(github.calls[commentIndex][1], 9002);
+});
+
+test("runFull still comments when the first GET after the probes hits a closed connection", async () => {
+  // 実際の GitHub API クライアントに偽 fetch を注入し、probe 後最初の GET（コメント一覧）だけを
+  // 接続切断で失敗させる。9/28・10/05 の schedule 実行で MECHANISM になった経路（Issue #322）
+  let failedOnce = false;
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const method = init.method ?? "GET";
+    const path = new URL(url).pathname + new URL(url).search;
+    calls.push([method, path]);
+    const issue = /^\/repos\/[^/]+\/[^/]+\/issues\/(\d+)$/.exec(path);
+    if (issue !== null) {
+      return jsonResponse({
+        number: Number(issue[1]),
+        state: "open",
+        labels: [{ name: "dependabot-ignore" }],
+      });
+    }
+    if (path.includes("/issues?labels=")) {
+      return jsonResponse(UNBLOCKED_REPO_ISSUES.map((number) => ({ number })));
+    }
+    if (path.includes("/comments")) {
+      if (method === "POST") {
+        return jsonResponse({ id: 1 }, 201);
+      }
+      if (!failedOnce) {
+        failedOnce = true;
+        throw fetchFailed("EPIPE", "write EPIPE");
+      }
+      return jsonResponse([]);
+    }
+    throw new Error(`unexpected request ${method} ${path}`);
+  };
+  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+
+  const { verdict } = await runFull(
+    UNBLOCKED_REPO,
+    fixtureDeps(UNBLOCKED_REPO, { github }),
+    OPTIONS,
+  );
+  assert.equal(verdict.exitCode, 10);
+  const commentCalls = calls.filter(([, path]) => path.includes("/comments"));
+  assert.deepEqual(
+    commentCalls.map(([method, path]) => [method, path.split("?")[0]]),
+    [
+      ["GET", `/repos/${REPOSITORY}/issues/9002/comments`],
+      ["GET", `/repos/${REPOSITORY}/issues/9002/comments`],
+      ["POST", `/repos/${REPOSITORY}/issues/9002/comments`],
+    ],
+  );
 });
 
 test("runFull exits 1 when the tracking issue is closed", async () => {
