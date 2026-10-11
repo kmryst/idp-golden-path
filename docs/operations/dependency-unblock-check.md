@@ -90,6 +90,7 @@ GitHub API の GET が、接続の切断を示す cause（`UND_ERR_SOCKET` / `EP
 再試行したときは、`GitHub API GET <path> の接続が切れていたため 1 回だけ再試行する（cause: <code>）` という
 warning を出します（Issue #326）。Job Summary の注釈に残るので、再試行が起きたかどうかを run ごとに確認できます。
 再試行が成功していれば判定には影響しないため、warning だけでは対処は不要です。
+実ランナーでの検証記録: [verification/2026-10-11-dependency-unblock-check-retry](./verification/2026-10-11-dependency-unblock-check-retry/README.md)
 
 ## 台帳スキーマ
 
