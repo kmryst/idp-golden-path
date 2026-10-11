@@ -76,9 +76,17 @@ GitHub Actions の失敗通知だからです。上流対応は数か月に一�
 | 3 | `追跡 Issue #NNN に dependabot-ignore ラベルが付いていない` | ラベルの付け忘れ | 追跡 Issue に `dependabot-ignore` を付ける |
 | 4 | `dependabot-ignore ラベル付き OPEN Issue #NNN が台帳にない` | ignore を外したのに Issue を閉じ忘れた、または台帳漏れ | Issue を close するか、台帳へ追記する |
 | 5 | `見直し期限 YYYY-MM-DD を過ぎている` | デッドマンスイッチ作動 | 状況を再評価し、期限を更新する PR を出す（無言の期限延長はしない） |
+| — | `Unexpected evaluator error: <message> (cause: <code> <message>)` | 評価器の想定外の例外。`fetch failed` なら GitHub API への接続の失敗 | cause を確認する。一時的なネットワーク障害なら workflow_dispatch で再実行し、再発するなら評価器の不具合として Issue を起票する |
 
 評価器が想定外の構造に出会った場合（`dependabot.yml` のインデント崩れ、`versions:` 形式の ignore、
 コメント行の欠落 / 重複など）も `MECHANISM` で赤になります。これは fail closed の設計です。
+
+GitHub API の GET が、接続の切断を示す cause（`UND_ERR_SOCKET` / `EPIPE` / `ECONNRESET`）の `fetch failed` で
+失敗した場合に限り、評価器は同じ GET を 1 回だけ再試行します。probe（`spawnSync`）でイベントループが止まっている間に
+サーバー側で閉じられた keep-alive 接続を、fetch（undici）が再利用して失敗することがあるためです
+（Node.js 24.21.0 / undici 7.29.1 で実測、Issue #322）。
+2 回目も失敗した場合、それ以外の cause、HTTP エラー（4xx / 5xx）は再試行せず `MECHANISM` になります。
+追跡 Issue へのコメント投稿（POST）は、重複投稿を避けるため再試行しません。
 
 ## 台帳スキーマ
 
