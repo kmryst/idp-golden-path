@@ -31,10 +31,6 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      verify-contract-violation:
-        description: "検証用（Issue #221）。default: を意図的に宣言しない boolean input"
-        required: false
-        type: boolean
       package-manager:
         description: >-
           依存関係監査に使う package manager（`npm` または `yarn`）。
