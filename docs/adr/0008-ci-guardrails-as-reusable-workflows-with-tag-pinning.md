@@ -463,6 +463,51 @@ reusable workflow の selftest は「動く経路」だけでなく
 - Issue: [kmryst/idp-golden-path#300](https://github.com/kmryst/idp-golden-path/issues/300)
 - 追跡 Issue（braces）: [kmryst/idp-golden-path#297](https://github.com/kmryst/idp-golden-path/issues/297)
 
+## 追記（2026-10-13）: `v1.7.2` をリリースする
+
+Dependency Unblock Check の評価器が、probe 後の GitHub API 呼び出しで `fetch failed` になる不具合
+（Node.js 24.21.0 / undici 7.29.1 で、probe 中に閉じられた keep-alive 接続を再利用する。Issue #322）を直した。
+この修正を呼び出し側へ届けるため、`v1.7.2` を発行し `v1` を付け替えた。
+
+### リリース内容
+
+- `v1.7.2` と `v1` は `dca5d23`（PR #328 のマージコミット）を指す。`v1` の付け替え前は `8c179a4`（`v1.7.1`）を指していた。
+  `v1.7.1` は `8c179a4` のまま残す
+- 主な変更（呼び出し側から見た挙動の変化）
+  - Dependency Unblock Check: 接続の切断を示す cause（`UND_ERR_SOCKET` / `EPIPE` / `ECONNRESET`）の
+    `fetch failed` に限り GET を 1 回再試行し、再試行時に warning を出す。想定外の例外のメッセージに cause を含める（PR #323 / #328）
+  - Trivy Image Scan: `docker/setup-buildx-action` / `docker/build-push-action` の版を更新した（Dependabot）
+- `v1.7.1` 以降に `.github/workflows/` で変わったのは `dependency-audit.yml` / `dependency-unblock-check.yml` / `trivy-image.yml`
+  の 3 ファイルだけで、他の reusable workflow の中身は `v1.7.1` と同じである
+
+### 非破壊的と判断した根拠
+
+- 3 ファイルとも `workflow_call` の inputs・secrets、既存 job の id と name、permissions は `v1.7.1` から変わっていない
+- 追加された job（`dependency-audit.yml` の npm audit・resolutions / overrides の台帳と撤去 PR の 7 件、
+  `dependency-unblock-check.yml` の Dependabot Ignore Removal PR）は、いずれも `github.repository == 'kmryst/idp-golden-path'`
+  を条件に持ち、呼び出し側では skipped になる。呼び出し側の required status checks には影響しない
+- Dependency Unblock Check の評価器が新たに import する `scripts/ci/removal-request.mjs` / `scripts/ci/npm-audit-policy.mjs` は、
+  評価器の sparse checkout の対象に含めてある
+- semver の区分は patch とした。範囲には撤去 PR の自動作成などの機能追加（feat）も含まれるが、それらは本リポジトリでのみ動き、
+  呼び出し側から見た挙動の変化は上記の不具合修正だけであるため
+
+### 呼び出し側への影響
+
+- ticket-c2c-platform（2026-10-13 時点の main）は、参照先の reusable workflow ごとに `@v1` と `@v1.7.1` が混在している
+  - `@v1`: `issue-template-check.yml` / `markdown-lint.yml` / `pr-commitlint.yml` / `sync-labels.yml` / `toolchain-version-check.yml`
+  - `@v1.7.1`: `codeql.yml` / `dependency-audit.yml` / `dependency-unblock-check.yml` / `pr-policy-check.yml` /
+    `security-scan.yml` / `trivy-config.yml` / `trivy-image.yml`（Trivy の 2 本は 2026-08-12 に手動で、他の 5 本は 2026-08-17 の Dependabot の更新 PR で `v1.7.1` に揃えられた）
+- `@v1` 参照の 5 本は、`v1.7.1` から中身が変わっていないため挙動は変わらない
+- `@v1.7.1` 固定分は `v1` の付け替えでは更新されない。Dependabot（`package-ecosystem: github-actions`、週次）が
+  `v1.7.2` への更新 PR を作る想定で、修正が届くのはその PR のマージ後である。中身が変わるのは
+  `dependency-audit.yml` / `dependency-unblock-check.yml` / `trivy-image.yml` の 3 本
+- ADR 0016 の「消費側（現在は ticket-c2c-platform が `@v1.7.1` で呼ぶ）」は、決定時点（2026-10-05）の状況の記述であり、書き換えない
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#322](https://github.com/kmryst/idp-golden-path/issues/322) / [#326](https://github.com/kmryst/idp-golden-path/issues/326) / [#334](https://github.com/kmryst/idp-golden-path/issues/334)
+- 実地検証: [Dependency Unblock Check の GitHub API 再試行 実地検証記録](../operations/verification/2026-10-11-dependency-unblock-check-retry/README.md)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
