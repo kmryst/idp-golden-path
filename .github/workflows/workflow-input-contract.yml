@@ -1,0 +1,64 @@
+# Workflow Input Contract
+# 目的: workflow_call の boolean input が `default:` を宣言しているかを、リポジトリ内の
+#       全 workflow について静的に検査する（設計判断は ADR-0008 追記 2026-08-12 / 2026-10-13）
+#
+# `default:` が無い boolean input は、caller が値を渡さなかったとき `false` に評価され、
+# `if:` ガードが黙って偽になる（step が skip されたまま job は success = silent failure）。
+# 実際に trivy-image.yml の `upload-sarif` で発生した（Issue #186）。
+#
+# 以前はこの job を trivy-image-selftest.yml に置いていたが、検査対象は全 workflow なのに
+# 起動条件が trivy 系の paths filter に限られ、trivy 系以外の workflow を変える PR で
+# 1 度も起動しなかった（Issue #221）。起動条件と検査対象を一致させるため独立した workflow にする。
+#
+# 実行契機:
+#   - pull_request: 検査対象（.github/workflows/**）・検査スクリプト・その単体テスト・
+#     テストを起動する npm script（package.json）を触った PR のみ（paths filter）
+#   - workflow_dispatch: 手動での再検査用
+#
+# required status check ではない。paths filter 付き workflow を required にすると、
+# filter に一致しない PR で check run が作成されず、required check が永久に pending になる
+# （docs/operations/branch-protection.md の Backstage CI の項と同じ理由）。
+#
+# 他リポジトリから呼び出す reusable workflow ではない（workflow_call を持たない）。
+
+name: Workflow Input Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/ci/workflow-input-contract.mjs"
+      - "scripts/ci/workflow-input-contract.test.mjs"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-input-contract-${{ github.event.pull_request.number || github.run_id }}
+  # 実行中 run のキャンセルは CANCELLED check run を commit に残し、
+  # status checks の判定に混入し得るため cancel しない（他 workflow と同方針）。
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Workflow Input Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # 拡張子 .yml / .yaml の両方を対象にする（paths filter の .github/workflows/** と範囲を揃える）。
+      # nullglob が無いと、一致しない glob が文字列のまま渡されてファイル読み込みで失敗する
+      - name: Check workflow_call boolean input defaults
+        run: |
+          shopt -s nullglob
+          node scripts/ci/workflow-input-contract.mjs .github/workflows/*.yml .github/workflows/*.yaml
+
+      - name: Run contract checker unit tests
+        run: npm run test:workflow-input-contract

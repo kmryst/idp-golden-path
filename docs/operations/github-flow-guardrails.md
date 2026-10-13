@@ -131,11 +131,11 @@ job を `Success` で終了させます。caller job や called workflow の job
 （正しくは `vulnerability-alerts: read`。Refs #212）。推測の余地を減らすため、現在の宣言をここに集約します。
 
 以下は 2026-08-16 に `.github/workflows/*.yml` を実測した結果です（workflow レベルと job レベルの宣言の合計。
-消費側 caller workflow に必要な permissions は含みません）。
+消費側 caller workflow に必要な permissions は含みません）。`contents: read` の行だけは 2026-10-13 に再実測しました。
 
 | 権限 | 使っている workflow | 用途 |
 | --- | --- | --- |
-| `contents: read` | 全 16 workflow（22 箇所） | `actions/checkout` によるリポジトリの読み取り |
+| `contents: read` | 全 17 workflow（26 箇所） | `actions/checkout` によるリポジトリの読み取り |
 | `security-events: write` | `codeql.yml` / `trivy-image.yml` / `trivy-image-selftest.yml`（5 箇所） | SARIF を Security > Code scanning alerts へアップロードする |
 | `issues: write` | `sync-labels.yml` / `issue-template-check.yml` / `dependency-unblock-check.yml` | ラベル定義の作成・付与・削除、Issue へのコメント投稿・更新 |
 | `id-token: write` | `deploy.yml` / `destroy.yml` | AWS への OIDC 認証トークンを発行する |

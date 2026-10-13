@@ -508,6 +508,35 @@ Dependency Unblock Check の評価器が、probe 後の GitHub API 呼び出し�
 - Issue: [kmryst/idp-golden-path#322](https://github.com/kmryst/idp-golden-path/issues/322) / [#326](https://github.com/kmryst/idp-golden-path/issues/326) / [#334](https://github.com/kmryst/idp-golden-path/issues/334)
 - 実地検証: [Dependency Unblock Check の GitHub API 再試行 実地検証記録](../operations/verification/2026-10-11-dependency-unblock-check-retry/README.md)
 
+## 追記（2026-10-13）: `Workflow Input Contract` を独立した workflow にし、起動条件を検査対象に一致させる
+
+追記 2026-08-12 の「selftest の `contract` job から全 PR で実行する」は誤りだった。
+`contract` job は `trivy-image-selftest.yml` に置かれており、その `on.pull_request.paths` は
+trivy 系の workflow・フィクスチャ・検査スクリプトに限られていた。検査対象はリポジトリ内の全 workflow なのに、
+trivy 系以外の workflow（例: `dependency-audit.yml`）だけを変更する PR では 1 度も起動しなかった。
+違反は 0 件で実害は出ていないが、Issue #186 の再発防止策そのものがすり抜け可能な状態だった。
+
+### 決定
+
+- `contract` job を `.github/workflows/workflow-input-contract.yml` に移す。job の `name`（`Workflow Input Contract`）は変えない
+- 起動条件は `pull_request` の paths filter で、`.github/workflows/**`・`scripts/ci/workflow-input-contract.mjs`・
+  `scripts/ci/workflow-input-contract.test.mjs`・`package.json`（単体テストを起動する npm script を持つ）とする
+- 検査対象に `.github/workflows/*.yaml` も加え、paths filter の `.github/workflows/**` と範囲を揃える
+- `trivy-image-selftest.yml` は docker build を伴う selftest の役割に戻し、paths から検査スクリプトを外す
+- required status checks には追加しない。paths filter 付き workflow を required にすると、filter に一致しない PR で
+  check run が作成されず永久に pending になるため（[branch-protection.md](../operations/branch-protection.md) の Backstage CI の項と同じ理由）
+- 他リポジトリへの配布（reusable workflow 化）は扱わない
+
+### 検討した代替案
+
+- **`trivy-image-selftest.yml` の paths に `.github/workflows/**` を足す**: 同じ workflow の `primary` / `secondary` job は
+  `if:` を持たず fixture イメージを docker build して scan するため、workflow を触るすべての PR でこの 2 job が走る。
+  避けるには paths ベースの `if:` などの条件式が必要になり、selftest 本来の意図を複雑にするため採らない
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#221](https://github.com/kmryst/idp-golden-path/issues/221)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
