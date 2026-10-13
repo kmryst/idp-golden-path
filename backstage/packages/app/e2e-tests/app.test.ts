@@ -16,18 +16,33 @@
 
 import { test, expect } from '@playwright/test';
 
-test('App should render the welcome page', async ({ page }) => {
+test('Guest sign-in shows the catalog page and the sidebar navigation', async ({
+  page,
+}) => {
   await page.goto('/');
 
   const enterButton = page.getByRole('button', { name: 'Enter' });
   await expect(enterButton).toBeVisible();
   await enterButton.click();
 
-  const nav = page.getByRole('navigation');
+  // サインインが完了し、入口画面のカタログが表示されること
+  await expect(enterButton).toBeHidden();
   await expect(
-    nav.getByRole('link', { name: 'Catalog', exact: true }),
+    page.getByRole('heading', { name: 'Catalog', level: 1 }),
   ).toBeVisible();
-  await expect(
-    page.getByRole('link', { name: 'APIs', exact: true }),
-  ).toBeVisible();
+
+  // サイドバーの主要導線を検証する。ページヘッダーの breadcrumb も
+  // navigation ランドマークのため、サイドバーの nav に名前で絞る
+  const sidebar = page.getByRole('navigation', { name: 'sidebar nav' });
+
+  const catalogLink = sidebar.getByRole('link', {
+    name: 'Catalog',
+    exact: true,
+  });
+  await expect(catalogLink).toBeVisible();
+  await expect(catalogLink).toHaveAttribute('href', '/');
+
+  const apisLink = sidebar.getByRole('link', { name: 'APIs', exact: true });
+  await expect(apisLink).toBeVisible();
+  await expect(apisLink).toHaveAttribute('href', '/api-docs');
 });
