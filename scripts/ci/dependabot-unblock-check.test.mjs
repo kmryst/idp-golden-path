@@ -776,6 +776,9 @@ function fetchFailed(code, message = `${code} from the fake fetch`) {
   return new TypeError("fetch failed", { cause: Object.assign(new Error(message), { code }) });
 }
 
+// 再試行の warning を CI のテスト step の注釈として出さないための no-op
+function ignoreWarning() {}
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -803,7 +806,7 @@ test("a GET is retried once when the keep-alive connection was closed", async ()
       fetchFailed(code),
       jsonResponse({ number: 146, state: "open", labels: [{ name: "dependabot-ignore" }] }),
     ]);
-    const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+    const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl, ignoreWarning);
     assert.deepEqual(await github.getIssue(146), {
       number: 146,
       state: "open",
@@ -813,13 +816,38 @@ test("a GET is retried once when the keep-alive connection was closed", async ()
   }
 });
 
+test("a retry is announced as a warning that carries the path and cause but no token", async () => {
+  const { fetchImpl } = scriptedFetch([fetchFailed("EPIPE"), jsonResponse([])]);
+  const warnings = [];
+  const github = createGitHubClient(REPOSITORY, "secret-test-token", fetchImpl, (message) =>
+    warnings.push(message),
+  );
+  await github.listIssueCommentBodies(146);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /GitHub API GET \/repos\/kmryst\/idp-golden-path\/issues\/146\/comments/);
+  assert.match(warnings[0], /cause: EPIPE/);
+  assert.doesNotMatch(warnings[0], /secret-test-token/);
+});
+
+test("no warning is emitted when the first attempt succeeds or the request is not retried", async () => {
+  const warnings = [];
+  const warn = (message) => warnings.push(message);
+  const ok = scriptedFetch([jsonResponse([])]);
+  await createGitHubClient(REPOSITORY, "test-token", ok.fetchImpl, warn).listLabeledOpenIssues();
+  const post = scriptedFetch([fetchFailed("UND_ERR_SOCKET")]);
+  await assert.rejects(
+    createGitHubClient(REPOSITORY, "test-token", post.fetchImpl, warn).createIssueComment(146, "body"),
+  );
+  assert.deepEqual(warnings, []);
+});
+
 test("a GET that fails twice is not retried again", async () => {
   const { calls, fetchImpl } = scriptedFetch([
     fetchFailed("UND_ERR_SOCKET"),
     fetchFailed("EPIPE"),
     jsonResponse([]),
   ]);
-  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl, ignoreWarning);
   await assert.rejects(github.listIssueCommentBodies(146), (error) => {
     assert.ok(error instanceof TypeError);
     assert.equal(error.cause.code, "EPIPE");
@@ -831,14 +859,14 @@ test("a GET that fails twice is not retried again", async () => {
 test("a GET is not retried on other causes or on HTTP errors", async () => {
   const dns = scriptedFetch([fetchFailed("ENOTFOUND"), jsonResponse([])]);
   await assert.rejects(
-    createGitHubClient(REPOSITORY, "test-token", dns.fetchImpl).listLabeledOpenIssues(),
+    createGitHubClient(REPOSITORY, "test-token", dns.fetchImpl, ignoreWarning).listLabeledOpenIssues(),
     (error) => error instanceof TypeError && error.cause.code === "ENOTFOUND",
   );
   assert.equal(dns.calls.length, 1);
 
   const http = scriptedFetch([jsonResponse({ message: "Bad Gateway" }, 502), jsonResponse([])]);
   await assert.rejects(
-    createGitHubClient(REPOSITORY, "test-token", http.fetchImpl).listLabeledOpenIssues(),
+    createGitHubClient(REPOSITORY, "test-token", http.fetchImpl, ignoreWarning).listLabeledOpenIssues(),
     (error) => error instanceof UnblockCheckError && /failed with 502/.test(error.message),
   );
   assert.equal(http.calls.length, 1);
@@ -849,7 +877,7 @@ test("a POST is never retried so that a comment cannot be posted twice", async (
     fetchFailed("UND_ERR_SOCKET"),
     jsonResponse({ id: 1 }, 201),
   ]);
-  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl, ignoreWarning);
   await assert.rejects(
     github.createIssueComment(146, "body"),
     (error) => error instanceof TypeError && error.cause.code === "UND_ERR_SOCKET",
@@ -1001,7 +1029,7 @@ test("runFull still comments when the first GET after the probes hits a closed c
     }
     throw new Error(`unexpected request ${method} ${path}`);
   };
-  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl);
+  const github = createGitHubClient(REPOSITORY, "test-token", fetchImpl, ignoreWarning);
 
   const { verdict } = await runFull(
     UNBLOCKED_REPO,
