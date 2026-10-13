@@ -664,3 +664,5 @@ required status checks に**昇格させません**
   実行されるため、Trivy Image Scan Selftest と同じ理由で昇格させない
 
 昇格する場合は別 Issue で扱い、`branch-protection.md` の設定変更と同じ PR でこのドキュメントを更新します。
+
+検証用の一時的な行です（Issue #221 の起動条件の検証。この PR はマージしません）。
