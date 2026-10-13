@@ -1,4 +1,5 @@
 # Dependency Audit
+# 検証用の一時的なコメント（Issue #221。この PR はマージしない）
 # 目的: 依存関係の既知脆弱性（CVE）を PR / スケジュールで継続的に検出する
 # ポリシー: high 以上で fail、moderate 以下は Step Summary での警告のみ（正本: docs/operations/security-scanning.md）
 # workflow name は status check（job name）と揃える
