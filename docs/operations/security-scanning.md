@@ -548,7 +548,8 @@ Dependabot 単体では手が出ないことが読み取れます。この場合
 
 `upload-sarif` は省略して呼ぶのが標準の使い方です。SARIF を上げたくない場合だけ明示的に `false` を渡します。
 この既定値は `trivy-image.yml` の input 宣言（`default: true`）が正本で、
-宣言漏れは selftest の `Workflow Input Contract` job が全 PR で検査します
+宣言漏れは [Workflow Input Contract](../../.github/workflows/workflow-input-contract.yml) が
+`.github/workflows/**` を変更する PR で検査します
 （宣言が無いと boolean input は未指定時に `false` に評価され、SARIF が黙って上がらなくなります。
 実際に発生した事象と対策は ADR-0008 追記 2026-08-12 を参照）。
 
@@ -645,7 +646,8 @@ blocking 化（`exit-code: '1'` / required status check 昇格）は、finding �
 
 ## required status checks との関係
 
-現時点では Dependency Audit / npm Dependency Audit / CodeQL / Trivy Config Scan / Trivy Image Scan Selftest を
+現時点では Dependency Audit / npm Dependency Audit / CodeQL / Trivy Config Scan / Trivy Image Scan Selftest /
+Workflow Input Contract を
 required status checks に**昇格させません**
 （[branch-protection.md](./branch-protection.md) の required checks は従来どおり）。
 
@@ -658,5 +660,7 @@ required status checks に**昇格させません**
 - Trivy Image Scan Selftest は paths filter 付きで実行されるため、required にすると
   filter に一致しない PR で check run が作成されず、required check が永久に pending になる
   （`Backstage CI` と同じ理由。[branch-protection.md](./branch-protection.md) 参照）
+- Workflow Input Contract も paths filter 付き（`.github/workflows/**` と検査スクリプト・`package.json`）で
+  実行されるため、Trivy Image Scan Selftest と同じ理由で昇格させない
 
 昇格する場合は別 Issue で扱い、`branch-protection.md` の設定変更と同じ PR でこのドキュメントを更新します。

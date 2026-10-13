@@ -71,8 +71,8 @@ on:
         # `default` が無いと `false` に評価され、下の `if:` が偽になって SARIF 関連 step が
         # 黙って skip される（job は success のまま = silent failure）。
         # 実測: ticket-c2c-platform run 31567906354 で 2 job とも SARIF 0 件のまま success だった。
-        # 新しい boolean input を足すときも必ず `default:` を書くこと（selftest の
-        # `contract` job が PR 時点で宣言漏れを検知する）
+        # 新しい boolean input を足すときも必ず `default:` を書くこと
+        # （workflow-input-contract.yml が PR 時点で宣言漏れを検知する）
         default: true
       trivy-version:
         description: "使用する Trivy のバージョン。未指定時は v0.70.0"
