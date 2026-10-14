@@ -537,6 +537,49 @@ trivy 系以外の workflow（例: `dependency-audit.yml`）だけを変更す�
 
 - Issue: [kmryst/idp-golden-path#221](https://github.com/kmryst/idp-golden-path/issues/221)
 
+## 追記（2026-10-14）: 修正版が別 major にしかない advisory は resolutions で上書きせず、期限付き例外で受容する
+
+追記 2026-08-05 の resolutions 追加基準は「修正版が依存元の宣言 range と同一 major 内に存在する」ことを求めており、
+修正版が別 major にしかない advisory は期限付き例外で受容している（basic-ftp の GHSA-c475-qrg2-pj4r（#295）、
+@graphql-tools/utils の GHSA-7mx3-vvmw-hjmv（#317））。この 2 件について、major を跨ぐ resolutions を認めるかを検討した。
+
+### 決定
+
+- 原則: 修正版が依存元の宣言 range と別 major にしかない場合、resolutions による major を跨ぐ上書きは認めない。
+  期限付き例外で受容し、上流の修正を待つ（現行運用を維持する）
+- 例外: 攻撃者の入力が脆弱な処理に実際に到達する High / Critical で、上流の修正を待てない場合に限り個別に判断する。
+  その判断は PR または ADR に個別に記録する
+- #295 / #317 は現状のまま、期限 2026-12-31 の例外を継続する
+
+### 背景
+
+2026-10-09 の実測（#318）では、basic-ftp 5 → 6、@graphql-tools/schema 8 → 10 / @graphql-tools/utils 8 → 12 の resolutions を適用しても
+依存元（`get-uri` / `mockttp`）の該当機能が動作し、advisory は audit から消えた。この実測結果は事実として残すが、採用はしない。
+
+### 採択理由
+
+- #295 は PAC プロキシを設定していないため、#317 はテスト支援用の依存でバックエンドの実行時に読み込まれず GraphQL も公開していないため、
+  いずれも攻撃者の入力が脆弱な処理に到達する経路がない。期限付き例外と、期限切れで `Dependency Audit` が再び fail する仕組みで管理できている
+- major を跨ぐ上書きは、依存元が検証していない組み合わせを自リポジトリで保守することになる。依存元の経路の自動テスト、
+  上流の破壊的変更との照合、撤去時の再検証まで含めた維持コストが、到達経路のない advisory の実害に比べて大きい
+- `backstage/` の `yarn test` は変更した依存の経路を通らず、スモークテストが 1 回通ったことはその組み合わせを保守できる根拠にならない
+  （外部レビューでも同じ指摘を受けた）
+
+### 検討した代替案
+
+- **実測で依存元の動作を確認できれば major を跨ぐ resolutions を認める**: 上記の維持コストを恒常的に負うため採らない。
+  台帳 `scripts/ci/yarn-resolutions.json` のスキーマや stale 判定の変更も不要になる
+
+### 再検討条件
+
+- 攻撃者の入力が到達する High / Critical が別 major にしか修正版を持たず、例外の期限内に上流の修正が見込めない事例が出たとき
+
+### 関連
+
+- Issue: [kmryst/idp-golden-path#318](https://github.com/kmryst/idp-golden-path/issues/318)
+- 追跡 Issue: [kmryst/idp-golden-path#295](https://github.com/kmryst/idp-golden-path/issues/295) /
+  [kmryst/idp-golden-path#317](https://github.com/kmryst/idp-golden-path/issues/317)
+
 ## 関連
 
 - Issue: [kmryst/idp-golden-path#39](https://github.com/kmryst/idp-golden-path/issues/39)
