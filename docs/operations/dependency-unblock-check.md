@@ -6,6 +6,8 @@ Dependabot の `ignore` が「もう外せる」状態になっていないか�
 設計判断の背景は [ADR-0013](../adr/0013-dependency-unblock-check.md) を参照してください。
 本リポジトリ自身の実行で `UNBLOCKED` を撤去 PR の自動作成に寄せた判断は
 [ADR-0016](../adr/0016-automated-removal-pr-for-dependency-workarounds.md) です。
+他の回避策（resolutions / overrides / 監査の期限付き例外）と台帳・判定・出口を揃える方針と、
+`@dependabot ignore` コメントを使わない判断は [ADR-0017](../adr/0017-unify-dependency-workaround-policy.md) です。
 脆弱性スキャン（`npm audit` / `yarn audit` / 期限付き例外）の正本は
 [security-scanning.md](./security-scanning.md) です。用途が別なので混ぜません。
 
@@ -220,6 +222,28 @@ peer 制約を**実際に踏むコマンド**（lint / test / 型チェックな
 - 追跡 Issue を起票したら、その場で `dependabot-ignore` を付ける（付け忘れは検査3 で赤）
 - ignore を解除するときは、`dependabot.yml` の ignore・台帳エントリ・追跡 Issue の close を**同一 PR**で行う
 - ラベルだけ外して Issue を OPEN のまま残さない（検査4 が空振りする）
+
+## ignore は何を止め、何を記録しないか
+
+- ignore が止めるのは Dependabot の PR だけです。Dependabot alert は open のまま残り、CI の監査の結果も変わりません
+- ignore は「更新を止める」宣言であって、「この GHSA を受容した」記録ではありません。
+  open な Dependabot alert を判断済みと数える台帳は、GHSA を記録する resolutions / overrides / 監査の期限付き例外の 3 種だけです
+  （[security-scanning.md の「Dependabot alert の扱い」](./security-scanning.md#dependabot-alert-の扱い)）。
+  ignore の範囲に修正版が入っている alert があれば、ignore とは別に、その alert を修正するか dismiss で判断を記録します
+- `update-types: ["version-update:semver-major"]` の ignore は security update を止めません。`versions:` の範囲指定や条件なしの ignore は
+  security update も止めるため規約外です（後述の正典書式）
+
+## `@dependabot ignore` コメントは使わない
+
+Dependabot の PR に `@dependabot ignore this major version` などのコメントを書くと、`.github/dependabot.yml` にも台帳にも載らない
+ignore が GitHub 側にだけ登録されます。この ignore は `>= 7.a, < 8` のような範囲指定になるため security update も止め、
+この仕組みの 1:1 対応検査（検査2）からも見えません（ADR-0017）。
+
+- 新しい ignore は、コメントではなく「[ignore を追加する手順](#ignore-を追加する手順)」で `dependabot.yml` と台帳に追加します
+- 既存のコメント由来の ignore（本リポジトリでは 2026-07-13 の 5 件。後述の実測表）は、ADR-0017 の移行計画の段階 1 で
+  `dependabot.yml` の `update-types: ["version-update:semver-major"]` と台帳のエントリへ移設します。
+  抑止範囲は「そのメジャー 1 つ」から「全メジャー」に広がります（後述の「注意 2 点」）
+- コメント由来の ignore が残っていないかの機械検出は Issue #219 で扱います。手で確認する手順は次節です
 
 ## ログからの `ignore-conditions` 取得
 
@@ -443,6 +467,10 @@ PR 作成 job は `steps` を実行せず、`removal.json` を信頼できる ch
 
 同一の解決版に対する記録コメントは 1 度しか投稿されません。対応するまで毎週赤が続きますが、
 コメントは増えません。赤が続くこと自体が「まだ人間が対応していない」という正しい表現です。
+
+消費側のこの契約（exit 10 + 記録コメント、`workflow_call` の inputs）は ADR-0017 の移行計画でも変えません。
+消費側に撤去 PR を作らせるには GitHub App のインストールと secret の登録という新しい前提が要り、
+ADR-0008 の破壊的変更（`v2`）に当たるためです。
 
 ## ローカルでの実行
 

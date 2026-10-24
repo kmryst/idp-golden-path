@@ -37,6 +37,35 @@ ticket-c2c-platform の実測では、image scan の 29 件（`CRITICAL,HIGH`）
 Dependabot 自体の状態をどこから読むか（run ログ・alerts API・Dependency graph の使い分け）は
 後述の「[Dependabot の観測面](#dependabot-の観測面)」節にまとめています。
 
+## 依存関係の回避策の一覧
+
+依存を更新するだけでは advisory や非互換を解消できないときに使う回避策（上書き・抑止）の一覧です。
+件数は載せません（台帳ファイルが正本）。方針は [ADR-0017](../adr/0017-unify-dependency-workaround-policy.md) で、
+移行計画の途中のため「出口」には現状を書き、ADR-0017 で変わる予定のものは表の下に書きます。
+
+| 仕組み | 台帳 | 判定 | 期限 | 出口 |
+| --- | --- | --- | --- | --- |
+| Yarn resolutions（セキュリティ起因） | [`yarn-resolutions.json`](../../scripts/ci/yarn-resolutions.json) | stale（全部外して再出現を見る） | なし | `Yarn Resolutions Inventory` が赤 |
+| Yarn resolutions（非セキュリティ起因） | [`yarn-resolutions-non-security.json`](../../scripts/ci/yarn-resolutions-non-security.json) | probe（宣言があるエントリのみ） | なし | 撤去 PR |
+| npm overrides | [`npm-overrides.json`](../../scripts/ci/npm-overrides.json) | stale（1 件ずつ外す） | なし | 撤去 PR |
+| 監査の期限付き例外（yarn） | [`yarn-audit-exceptions.json`](../../scripts/ci/yarn-audit-exceptions.json) / `yarn-audit-exceptions` input | 未検出なら警告 | `expires` | Job Summary の警告 |
+| 監査の期限付き例外（npm） | [`npm-audit-exceptions.json`](../../scripts/ci/npm-audit-exceptions.json) / `npm-audit-exceptions` input | 未検出なら警告 | `expires` | Job Summary の警告 |
+| Dependabot ignore | [`.github/dependabot.yml`](../../.github/dependabot.yml) + [`dependabot-unblock.json`](../../scripts/ci/dependabot-unblock.json) | probe | `review-by` | 撤去 PR（消費側は exit 10 + Issue コメント） |
+| `@dependabot ignore` コメント | なし（GitHub 側のみ） | なし | なし | なし |
+| Dependabot の PR を閉じる | なし（PR の履歴のみ） | なし | なし | なし |
+| Dependabot alert の手動 dismiss | なし（alert の `dismissed_reason` / `dismissed_comment`） | なし | なし | なし |
+| Dependabot auto-triage rules | なし（GitHub 側のみ） | GitHub が再評価 | なし | なし |
+
+- 台帳の列の「input」は、reusable workflow 消費側が caller の `with:` で渡す同形式の JSON です。台帳ファイルは本リポジトリ自身の実行でだけ読みます
+- 「撤去 PR」は GitHub App `kmryst-dependency-bot` が本リポジトリの `schedule` / `workflow_dispatch` 実行で作る PR です（ADR-0015 / ADR-0016）
+- ADR-0017 の移行後は、Yarn resolutions（セキュリティ起因）の判定を「1 件ずつ外す」に揃え、
+  Yarn resolutions（セキュリティ起因）と監査の期限付き例外の出口も撤去 PR にします
+- `@dependabot ignore` コメントと「PR を閉じる」は、記録がリポジトリ内に残らず判定も出口も無いため、抑止の手段として使いません。
+  既存のコメント由来の ignore は `dependabot.yml` と台帳へ移設します（正本は [dependency-unblock-check.md](./dependency-unblock-check.md)）
+- Dependabot alert の dismiss と auto-triage rules は自前の仕組みで持たず、GitHub 側の alert の状態を記録先とします
+  （後述の「[Dependabot alert の扱い](#dependabot-alert-の扱い)」）
+- 各仕組みの運用手順はこの文書の各節（resolutions / overrides / 監査の期限付き例外）と dependency-unblock-check.md（Dependabot ignore）にあります
+
 ## Dependency Audit
 
 - 本リポジトリの対象: 依存管理の 3 系統すべて（依存更新で解消できない advisory の扱いは「[セキュリティ起因の yarn resolutions の運用](#セキュリティ起因の-yarn-resolutions-の運用)」「[セキュリティ起因の npm overrides の運用](#セキュリティ起因の-npm-overrides-の運用)」を参照）
@@ -89,6 +118,8 @@ moderate 以下を fail させないのは、Backstage 本体の依存グラフ�
    - npm の reusable workflow 消費側は、後述の `npm-audit-exceptions` input へ期限付き GHSA を設定する
    - yarn の reusable workflow 消費側は、後述の `yarn-audit-exceptions` input へ期限付き GHSA を設定する
    - 除外は恒久化させず、修正版リリース後に除外を外す PR を作る
+   - 対応する Dependabot alert は dismiss せず open のまま残す。期限の管理は台帳の `expires` に一本化し、
+     期限を持たない dismiss と二重に記録しない（ADR-0017。後述の「[Dependabot alert の扱い](#dependabot-alert-の扱い)」）
 4. schedule 実行での検出（PR 起因でない新規 CVE）も同じフローで、Issue 起票から始める
 
 ### npm reusable workflow の期限付き例外
@@ -147,7 +178,7 @@ caller を持たず input を渡せないため、yarn 側と同じくリポジ�
   markdownlint-cli2）は名前で登録せず、根本の GHSA 1 件の登録で一緒に一時許可される
 - 期限切れ・上限超過・書式不正は fail closed（Job Summary の `Error:` 行に該当エントリと理由が出る）。
   検出されなくなった例外は fail させず Job Summary で削除を促す（yarn 側と同じ）
-- 追跡 Issue は yarn 側と同じ advisory なら共用してよい（例: braces の GHSA-vfj7-8cjw-p6xm は #297）
+- 追跡 Issue は yarn 側と同じ advisory なら共用してよい（例: braces の GHSA-vfj7-8cjw-p6xm は yarn 側・npm 側とも #297 で追跡した）
 
 ### yarn の期限付き例外
 
@@ -344,6 +375,8 @@ yarn の `resolutions` と同じ目的の機構として `overrides` があり�
 直近では `smol-toml: ^1.8.0`（[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2)、影響範囲 `<= 1.7.0`）を
 Issue #261 で追加し、`markdownlint-cli2@0.23.3` が `"smol-toml": "1.8.0"` と exact pin するようになったため
 `npm Overrides Inventory` の stale 判定に従って Issue #302 で撤去しました。
+その後の smol-toml の advisory（[GHSA-r4xh-jqrq-34v2](https://github.com/advisories/GHSA-r4xh-jqrq-34v2)、影響範囲 `<= 1.8.0`）は、
+overrides を入れず、#352 で markdownlint-cli2 を 0.24.0 に上げて修正版 1.9.1 に解決しました。
 
 `overrides` の右辺は yarn 側と同じく修正版を下限とする range（例: `^1.8.0`）にします。
 再現性の固定は lockfile の仕事であり、右辺を完全固定すると同系統の次の修正版を拾えません。
@@ -515,6 +548,57 @@ Dependabot 単体では手が出ないことが読み取れます。この場合
 機械判定は [dependency-unblock-check.md](./dependency-unblock-check.md) の評価器のように
 リポジトリ内のファイルを正本とする仕組みで行います。
 
+## Dependabot alert の扱い
+
+Dependabot alert は CI の監査とは別に GitHub が検知するもので、監査の期限付き例外を入れても alert は閉じず、
+alert を dismiss しても CI の監査は止まりません。判断の記録先を 1 つに決めるため、次の規則で扱います
+（設計判断は [ADR-0017](../adr/0017-unify-dependency-workaround-policy.md)）。
+
+### open のまま残してよい alert
+
+**GHSA が次のいずれかの台帳に載っている alert だけ**を open のまま残してよいものとします。
+
+- `scripts/ci/yarn-resolutions.json`（`advisories`）
+- `scripts/ci/npm-overrides.json`（`advisories`）
+- `scripts/ci/yarn-audit-exceptions.json` / `scripts/ci/npm-audit-exceptions.json`（`id`）
+
+Dependabot ignore（`dependabot.yml` + `scripts/ci/dependabot-unblock.json`）は「更新を止める」宣言であって
+GHSA を受容した記録ではないため、ここには数えません。
+
+それ以外の open な alert は、severity を問わず、依存の更新で修正するか、下の規則で dismiss して判断を記録します。
+「open で、どの台帳にも載っていない」状態を放置と定義します。この状態の機械検出は Issue #212 で扱います。
+
+### dismiss の規則
+
+- dismiss は人が行います。自動化しません
+- `dismissed_reason` は判断に合う値を選びます（REST API の値）
+
+  | 判断 | `dismissed_reason` |
+  | --- | --- |
+  | 脆弱なコードパスを使っていない | `not_used` |
+  | リスクを受容する | `tolerable_risk` |
+  | 誤検知 | `inaccurate` |
+  | 修正に着手済み | `fix_started` |
+  | 対応の余力がない | `no_bandwidth` |
+
+- `dismissed_comment` には次を書きます。GitHub 側にしか残らない記録なので、追跡 Issue を読まなくても判断が追える粒度にします
+  - 根拠（どのコードパスが使われていないか、どの前提でリスクを受容するか。実測か推測かを書く）
+  - 再評価の条件（親パッケージが修正版を受け付けたら、上流の対応が出たら、など）
+  - `fix_started` の場合は修正を追う Issue の URL
+- `no_bandwidth` は一時的な先送りに限り、再評価の時期を `dismissed_comment` に書きます
+- code scanning alert（CodeQL / Trivy）の dismiss も `dismissed_comment` に同じ項目を書きます。理由の値は code scanning 側の語彙
+  （後述の CodeQL 節）を使います。検出後に放置しないための通知の仕組みは Issue #336 で決めます
+
+### 自前で持たないもの
+
+- **auto-triage rules**: GitHub preset「Dismiss low impact issues for development-scoped dependencies」で `auto_dismissed` になった alert は、
+  GitHub 側で判断済みとして扱い、台帳にもこの文書にも転記しません。GitHub は advisory や依存の scope が変わると alert を再 open することがあり、
+  その時点で上の規則に従います
+- **監査の severity 閾値**: high のまま変えません。moderate / low の alert の受容は、CI の監査ではなく dismiss で記録します
+- **`security_update_not_possible` で失敗する Dependabot security updates**: 失敗理由は「[Dependabot の観測面](#dependabot-の観測面)」の手順で調べます。
+  親パッケージの range に修正版が入らない場合、同一 major 内の修正版なら resolutions / overrides（各節の追加基準に従う）、
+  それ以外は上の規則で dismiss するか open のまま残します。dismiss した alert には Dependabot が security update を試みなくなります
+
 ## CodeQL
 
 - 解析言語: `javascript-typescript`（Backstage アプリ本体）と `actions`（GitHub Actions workflow）。build-mode は `none`（ビルド不要のスキャン）
@@ -525,7 +609,8 @@ Dependabot 単体では手が出ないことが読み取れます。この場合
 
 1. Security > Code scanning alerts で該当 alert（ルール ID・該当箇所・severity）を確認する
 2. 原則としてコード修正で解消する
-3. false positive の場合: alert を Dismiss し、理由（False positive / Used in tests / Won't fix）を必ず選択する
+3. false positive の場合: alert を Dismiss し、理由（False positive / Used in tests / Won't fix）を必ず選択する。
+   コメントには「[Dependabot alert の扱い](#dependabot-alert-の扱い)」の `dismissed_comment` と同じ項目（根拠・再評価の条件・追跡 Issue）を書く
 4. alert の存在自体は PR をブロックしない（後述）。critical / high の alert は Issue を起票して追跡する
 
 ## Trivy Image Scan

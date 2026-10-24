@@ -56,3 +56,4 @@ ADR はその正本を置き換えるものではなく、重要な設計判断�
 | [0014](./0014-terraform-toolchain-version-standardization.md) | Accepted | Terraform ツールチェーンのバージョンを 3 リポジトリで 1.14.8 に統一し、ローカル正本と CI pin の整合性を CI で検査する |
 | [0015](./0015-yarn-resolutions-probe-and-automated-removal-pr.md) | Accepted | 脆弱性以外の yarn resolutions を週次で probe し、解除可能になったら GitHub App で撤去 PR を自動作成する |
 | [0016](./0016-automated-removal-pr-for-dependency-workarounds.md) | Accepted | 不要になった依存関係の回避策・例外の撤去 PR 自動作成を、全台帳と Dependabot ignore に広げる |
+| [0017](./0017-unify-dependency-workaround-policy.md) | Proposed | 依存関係の回避策の台帳・判定・出口・失敗通知を統一し、Dependabot alert の判断は GitHub 側の状態を正本とする |
