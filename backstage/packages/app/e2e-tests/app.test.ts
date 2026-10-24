@@ -45,4 +45,10 @@ test('Guest sign-in shows the catalog page and the sidebar navigation', async ({
   const apisLink = sidebar.getByRole('link', { name: 'APIs', exact: true });
   await expect(apisLink).toBeVisible();
   await expect(apisLink).toHaveAttribute('href', '/api-docs');
+
+  // 通知への導線は NotificationsSidebarItem の 1 つだけにする。
+  // page:notifications の自動ナビ項目と二重に表示されないこと
+  await expect(
+    sidebar.getByRole('link', { name: 'Notifications' }),
+  ).toHaveCount(1);
 });
