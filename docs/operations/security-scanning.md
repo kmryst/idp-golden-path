@@ -178,7 +178,7 @@ caller を持たず input を渡せないため、yarn 側と同じくリポジ�
   markdownlint-cli2）は名前で登録せず、根本の GHSA 1 件の登録で一緒に一時許可される
 - 期限切れ・上限超過・書式不正は fail closed（Job Summary の `Error:` 行に該当エントリと理由が出る）。
   検出されなくなった例外は fail させず Job Summary で削除を促す（yarn 側と同じ）
-- 追跡 Issue は yarn 側と同じ advisory なら共用してよい（例: braces の GHSA-vfj7-8cjw-p6xm は yarn 側・npm 側とも #297 で追跡した）
+- 追跡 Issue は yarn 側と同じ advisory なら共用してよい
 
 ### yarn の期限付き例外
 
