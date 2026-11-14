@@ -8,7 +8,7 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 
 C4 モデルの System Context / Container 図。作図の元にした inventory と作図スクリプトは [docs/architecture/diagrams/src/](./docs/architecture/diagrams/src/README.md) にある。
 
-![System Context / Container 図: Developer が Backstage の Software Templates で service-baseline からリポジトリを作成して Software Catalog に登録し、Platform engineer がタグで配布する reusable workflows（12 本の CI ガードレール）を terraform-hannibal・ticket-c2c-platform・felis-ai-chatbot と新しいリポジトリが uses で呼び出す構成](./docs/architecture/diagrams/component-relations.png)
+![System Context / Container 図: Developer が Backstage の Software Templates でテンプレートを選択・実行し、service-baseline の skeleton を展開してリポジトリを作成・push し、Software Catalog に Component を登録する。Platform engineer がタグで配布する reusable workflows（12 本の CI ガードレール）を terraform-hannibal・ticket-c2c-platform・felis-ai-chatbot と新しいリポジトリに共有し、Software Catalog は terraform-hannibal・ticket-c2c-platform の catalog-info.yaml を取り込む構成](./docs/architecture/diagrams/component-relations.png)
 
 ## Status
 
