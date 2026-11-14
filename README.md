@@ -6,7 +6,9 @@ Internal Developer Platform (IDP) のポートフォリオ実装。Backstage を
 
 ## アーキテクチャ概要
 
-![Internal Developer Platform and Golden Path overview](./docs/architecture/diagrams/idp-golden-path-overview.svg)
+C4 モデルの System Context / Container 図。作図の元にした inventory と作図スクリプトは [docs/architecture/diagrams/src/](./docs/architecture/diagrams/src/README.md) にある。
+
+![System Context / Container 図: Developer が Backstage の Software Templates で service-baseline からリポジトリを作成して Software Catalog に登録し、Platform engineer がタグで配布する reusable workflows（12 本の CI ガードレール）を terraform-hannibal・ticket-c2c-platform・felis-ai-chatbot と新しいリポジトリが uses で呼び出す構成](./docs/architecture/diagrams/component-relations.png)
 
 ## Status
 
