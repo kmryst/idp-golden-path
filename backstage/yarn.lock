@@ -3338,9 +3338,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@backstage/plugin-scaffolder-backend@npm:^4.2.1":
-  version: 4.2.1
-  resolution: "@backstage/plugin-scaffolder-backend@npm:4.2.1"
+"@backstage/plugin-scaffolder-backend@npm:^4.2.2":
+  version: 4.2.2
+  resolution: "@backstage/plugin-scaffolder-backend@npm:4.2.2"
   dependencies:
     "@backstage/backend-openapi-utils": "npm:^0.7.3"
     "@backstage/backend-plugin-api": "npm:^1.11.0"
@@ -3375,7 +3375,7 @@ __metadata:
     zen-observable: "npm:^0.10.0"
     zod: "npm:^3.25.76 || ^4.0.0"
     zod-to-json-schema: "npm:^3.25.1"
-  checksum: 10c0/98fd3e9a2f14461827a47b1e576aeb06a2f78bd47302537c5959a197c668aa1b7bc97ce1503c14cf7349b8f3dcc4e5a4c1760ffd23c191ccb85c4e501eca505b
+  checksum: 10c0/4a1a48d2892d80297b488ee786f3bc694e597e0ea2a5e6a835632f4ebf2f5209bc8c8075b7f05ed7d9bf248fa3d398f1d72388a35bd93f640a5f247db222b6dd
   languageName: node
   linkType: hard
 
@@ -3788,9 +3788,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@backstage/plugin-techdocs-backend@npm:^2.4.0":
-  version: 2.4.0
-  resolution: "@backstage/plugin-techdocs-backend@npm:2.4.0"
+"@backstage/plugin-techdocs-backend@npm:^2.4.2":
+  version: 2.4.2
+  resolution: "@backstage/plugin-techdocs-backend@npm:2.4.2"
   dependencies:
     "@backstage/backend-plugin-api": "npm:^1.11.0"
     "@backstage/catalog-client": "npm:^1.16.3"
@@ -3800,7 +3800,7 @@ __metadata:
     "@backstage/integration": "npm:^2.1.3"
     "@backstage/plugin-catalog-node": "npm:^2.2.6"
     "@backstage/plugin-techdocs-common": "npm:^0.1.2"
-    "@backstage/plugin-techdocs-node": "npm:^2.1.0"
+    "@backstage/plugin-techdocs-node": "npm:^2.2.1"
     "@backstage/types": "npm:^1.2.2"
     express: "npm:^4.22.0"
     express-promise-router: "npm:^4.1.0"
@@ -3808,7 +3808,7 @@ __metadata:
     knex: "npm:^3.0.0"
     p-limit: "npm:^3.1.0"
     winston: "npm:^3.2.1"
-  checksum: 10c0/e4d0fe281c1f0e9e26ed4e35f659f03b4455d0538087c488ed1fef5f3f5516865e2648f5ee3f4d492fe96486a889d08a6f3ee9880eb944a407052b4198254494
+  checksum: 10c0/8704a618db978f7df3202385bfbb1a177a0bbc8503f9591aa308758543a02e6888c8110a522f935230ad883d29037a12b806aadc4e86d160823cf0d74dda13ee
   languageName: node
   linkType: hard
 
@@ -3882,6 +3882,44 @@ __metadata:
     recursive-readdir: "npm:^2.2.2"
     winston: "npm:^3.2.1"
   checksum: 10c0/ce48d4c934e109235ba7b71a3e0754ce132e66cb710e5e00b707d2aaff54bf22aeb532145fb9b3388aea50608b06dd3f08db36c2cb46995194dbdbd37945ccb8
+  languageName: node
+  linkType: hard
+
+"@backstage/plugin-techdocs-node@npm:^2.2.1":
+  version: 2.2.1
+  resolution: "@backstage/plugin-techdocs-node@npm:2.2.1"
+  dependencies:
+    "@aws-sdk/client-s3": "npm:^3.350.0"
+    "@aws-sdk/credential-providers": "npm:^3.350.0"
+    "@aws-sdk/lib-storage": "npm:^3.350.0"
+    "@aws-sdk/types": "npm:^3.347.0"
+    "@azure/identity": "npm:^4.0.0"
+    "@azure/storage-blob": "npm:^12.5.0"
+    "@backstage/backend-plugin-api": "npm:^1.11.0"
+    "@backstage/catalog-model": "npm:^1.10.2"
+    "@backstage/config": "npm:^1.3.10"
+    "@backstage/errors": "npm:^1.3.2"
+    "@backstage/integration": "npm:^2.1.3"
+    "@backstage/integration-aws-node": "npm:^0.2.3"
+    "@backstage/plugin-search-common": "npm:^1.2.26"
+    "@backstage/plugin-techdocs-common": "npm:^0.1.2"
+    "@google-cloud/storage": "npm:^7.0.0"
+    "@smithy/node-http-handler": "npm:^3.0.0"
+    "@trendyol-js/openstack-swift-sdk": "npm:^0.0.7"
+    "@types/express": "npm:^4.17.6"
+    "@types/js-yaml": "npm:^4.0.0"
+    dockerode: "npm:^4.0.0"
+    express: "npm:^4.22.0"
+    fs-extra: "npm:^11.2.0"
+    git-url-parse: "npm:^15.0.0"
+    hpagent: "npm:^1.2.0"
+    js-yaml: "npm:^5.0.0"
+    json5: "npm:^2.1.3"
+    mime-types: "npm:^2.1.27"
+    p-limit: "npm:^3.1.0"
+    recursive-readdir: "npm:^2.2.2"
+    winston: "npm:^3.2.1"
+  checksum: 10c0/d3ae2dd01050b7203d3c6f803f434b7387fd03afd423163ce79e107cc256771393d398488337663df43bbcd0695631f829e45d06448fd8f2d73ccdb2aab62617
   languageName: node
   linkType: hard
 
@@ -11108,7 +11146,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/js-yaml@npm:^4.0.1":
+"@types/js-yaml@npm:^4.0.0, @types/js-yaml@npm:^4.0.1":
   version: 4.0.9
   resolution: "@types/js-yaml@npm:4.0.9"
   checksum: 10c0/24de857aa8d61526bbfbbaa383aa538283ad17363fcd5bb5148e2c7f604547db36646440e739d78241ed008702a8920665d1add5618687b6743858fae00da211
@@ -13130,7 +13168,7 @@ __metadata:
     "@backstage/plugin-permission-common": "npm:^0.9.12"
     "@backstage/plugin-permission-node": "npm:^0.11.5"
     "@backstage/plugin-proxy-backend": "npm:^0.6.19"
-    "@backstage/plugin-scaffolder-backend": "npm:^4.2.1"
+    "@backstage/plugin-scaffolder-backend": "npm:^4.2.2"
     "@backstage/plugin-scaffolder-backend-module-github": "npm:^0.10.1"
     "@backstage/plugin-scaffolder-backend-module-notifications": "npm:^0.1.27"
     "@backstage/plugin-search-backend": "npm:^2.1.8"
@@ -13139,7 +13177,7 @@ __metadata:
     "@backstage/plugin-search-backend-module-techdocs": "npm:^0.4.19"
     "@backstage/plugin-search-backend-node": "npm:^1.4.9"
     "@backstage/plugin-signals-backend": "npm:^0.3.20"
-    "@backstage/plugin-techdocs-backend": "npm:^2.4.0"
+    "@backstage/plugin-techdocs-backend": "npm:^2.4.2"
     app: "link:../app"
     better-sqlite3: "npm:^13.0.3"
     node-gyp: "npm:^13.1.0"
