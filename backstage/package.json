@@ -43,10 +43,10 @@
     "@backstage/cli-defaults": "^0.1.7",
     "@backstage/e2e-test-utils": "^0.1.2",
     "@jest/environment-jsdom-abstract": "~30.5.2",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@types/jest": "^30.0.0",
     "jest": "~30.5.2",
-    "jsdom": "^31.0.0",
+    "jsdom": "^31.0.1",
     "node-gyp": "^13.1.0",
     "prettier": "^3.10.1",
     "typescript": "~6.0.3"
